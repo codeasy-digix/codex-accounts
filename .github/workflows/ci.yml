@@ -1,0 +1,67 @@
+name: Test and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [macos-14, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install test shell on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - name: Download verified native runtime for integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -sm)" in
+            'Darwin arm64') platform=darwin_arm64 ;;
+            'Darwin x86_64') platform=darwin_amd64 ;;
+            'Linux aarch64') platform=linux_arm64 ;;
+            'Linux x86_64') platform=linux_amd64 ;;
+            *) exit 1 ;;
+          esac
+          native_version=$(jq -r .version packaging/codex-runtime.json)
+          native_target=$(jq -r ".targets.$platform.target" packaging/codex-runtime.json)
+          native_hash=$(jq -r ".targets.$platform.sha256" packaging/codex-runtime.json)
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/native.tar.gz" "https://github.com/openai/codex/releases/download/rust-v$native_version/codex-package-$native_target.tar.gz"
+          printf '%s  %s\n' "$native_hash" "$RUNNER_TEMP/native.tar.gz" > "$RUNNER_TEMP/native.sha256"
+          shasum -a 256 -c "$RUNNER_TEMP/native.sha256"
+          mkdir "$RUNNER_TEMP/native"
+          tar -xzf "$RUNNER_TEMP/native.tar.gz" -C "$RUNNER_TEMP/native"
+          CODEX_ACCOUNTS_INTEGRATION_RUNTIME="$RUNNER_TEMP/native/bin/codex" go test -run TestRealBundledRuntime -v .
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build release artifacts
+        run: go run ./cmd/package -version "${GITHUB_REF_NAME#v}" -owner "${GITHUB_REPOSITORY_OWNER}"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS dist/codex-accounts.rb --verify-tag --generate-notes
