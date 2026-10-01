@@ -11,7 +11,7 @@ no GUI, history server, cross-device synchronization, or background daemon.
 ## Install
 
 ```sh
-brew install kakadais/tap/codex-accounts
+brew install codeasy-digix/tap/codex-accounts
 codex-accounts doctor
 ```
 
@@ -132,7 +132,7 @@ Development needs Go 1.25+ only. The consumer needs neither Go nor a C compiler.
 go test -race ./...
 go vet ./...
 CGO_ENABLED=0 go build .
-go run ./cmd/package -version 0.1.0
+go run ./cmd/package -version 0.1.1
 ```
 
 The packager builds all four binaries, produces archives and SHA256SUMS, and

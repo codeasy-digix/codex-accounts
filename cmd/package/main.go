@@ -27,8 +27,8 @@ type manifest struct {
 }
 
 func main() {
-	version := flag.String("version", "", "release version, e.g. 0.1.0")
-	owner := flag.String("owner", "kakadais", "GitHub owner")
+	version := flag.String("version", "", "release version, e.g. 0.1.1")
+	owner := flag.String("owner", "codeasy-digix", "GitHub owner")
 	flag.Parse()
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(*version) || !regexp.MustCompile(`^[a-zA-Z0-9-]+$`).MatchString(*owner) {
 		fail(fmt.Errorf("supply -version x.y.z and a valid GitHub owner"))
