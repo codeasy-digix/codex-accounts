@@ -50,7 +50,10 @@ func fixtureRuntime() {
 	if record := os.Getenv("CODEX_ACCOUNTS_TEST_LOG"); record != "" {
 		f, _ := os.OpenFile(record, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if f != nil {
-			json.NewEncoder(f).Encode(map[string]any{"args": os.Args[1:], "env": os.Environ(), "pid": os.Getpid()})
+			json.NewEncoder(f).Encode(map[string]any{
+				"args": os.Args[1:], "home": os.Getenv("CODEX_HOME"), "sqlite": os.Getenv("CODEX_SQLITE_HOME"), "pid": os.Getpid(),
+				"apiOverridePresent": os.Getenv("OPENAI_API_KEY") != "" || os.Getenv("CODEX_API_KEY") != "" || os.Getenv("CODEX_ACCESS_TOKEN") != "",
+			})
 			f.Close()
 		}
 	}
