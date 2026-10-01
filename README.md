@@ -11,7 +11,7 @@ no GUI, history server, cross-device synchronization, or background daemon.
 ## Install
 
 ```sh
-brew install codeasy-org/tap/codex-accounts
+brew install kakadais/tap/codex-accounts
 codex-accounts doctor
 ```
 

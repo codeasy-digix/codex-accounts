@@ -13,11 +13,11 @@ All development/release commands run from the repository root.
    runs macOS/Linux tests and native protocol integration, then builds four
    `CGO_ENABLED=0` archives and publishes their SHA256SUMS and formula.
 4. Copy the release's `codex-accounts.rb` into
-   `codeasy-org/homebrew-tap/Formula/codex-accounts.rb`, run `brew style` and
+   `kakadais/homebrew-tap/Formula/codex-accounts.rb`, run `brew style` and
    `brew test`, then commit and push the tap. The tap uses the official upstream
    native package as a checksummed resource, so no Cask, Python, npm, compiler,
    or existing Codex installation is required.
-5. Verify `brew install codeasy-org/tap/codex-accounts` on macOS and Linux, and
+5. Verify `brew install kakadais/tap/codex-accounts` on macOS and Linux, and
    test `doctor`, default status, and one existing account without a model turn.
 
 For a local release, `go run ./cmd/package -version X.Y.Z` generates exactly the
@@ -30,4 +30,4 @@ are needed. Updating a separate tap is deliberately a maintainer commit; this
 avoids storing a broad organization PAT in a build workflow.
 
 Homebrew's core Formula repository is not required. The public tap is immediately
-installable through `brew install codeasy-org/tap/codex-accounts`.
+installable through `brew install kakadais/tap/codex-accounts`.

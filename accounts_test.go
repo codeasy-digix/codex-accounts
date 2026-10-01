@@ -24,6 +24,11 @@ func TestMain(m *testing.M) {
 		fixtureRuntime()
 		os.Exit(0)
 	}
+	// A cross-compiled test executable can exercise a release on a machine with
+	// no Go installation, using the already-built CLI rather than compiling it.
+	if testCLI = os.Getenv("CODEX_ACCOUNTS_TEST_CLI"); testCLI != "" {
+		os.Exit(m.Run())
+	}
 	root, err := os.MkdirTemp("", "codex-accounts-test-build-")
 	if err != nil {
 		panic(err)
