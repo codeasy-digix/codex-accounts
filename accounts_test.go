@@ -441,7 +441,7 @@ codex account ryu || exit 21
 codex account >/dev/null || exit 15
 codex account default || exit 16
 test -z "${CODEX_ACCOUNT-}" && test -z "${CODEX_HOME-}" || exit 17
-codex run --help
+codex resume --help
 `
 			cmd := exec.Command(shell, "-c", script)
 			output, err := cmd.CombinedOutput()
@@ -449,7 +449,7 @@ codex run --help
 				t.Fatalf("%s: %v\n%s", shell, err, output)
 			}
 			calls, _ := os.ReadFile(filepath.Join(root, "calls.jsonl"))
-			if !strings.Contains(string(calls), `"--no-daemon"`) {
+			if !strings.Contains(string(calls), `"args":["resume","--help"]`) {
 				t.Fatal("native CLI not dispatched")
 			}
 			// Failure must leave the already-selected terminal unchanged.

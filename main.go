@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -58,6 +59,10 @@ func (a application) execute(args []string) error {
 			return a.account(args[1:])
 		case "continue":
 			return a.continueAccounts(args[1:])
+		case "__native":
+			// The shell wrapper reserves only account/continue. Preserve the
+			// upstream CLI's help, version, doctor and all future commands.
+			return a.run(args[1:])
 		case "__continue-worker":
 			return a.continueWorker(args[1:])
 		case "doctor":
@@ -202,8 +207,14 @@ func nativeCommand(args []string) (string, []string, []string, error) {
 		return "", nil, nil, err
 	}
 	env := runtimeEnvironment(binary, os.Environ())
-	nativeArgs := []string{binary, "--no-daemon"}
-	if name := os.Getenv("CODEX_ACCOUNT"); name != "" {
+	nativeArgs := []string{binary}
+	if name := os.Getenv("CODEX_ACCOUNT"); name != "" && upstreamCommand(args) == "update" {
+		// Installation is shared across accounts. A standalone updater must
+		// locate its releases under the original home, not a credential home.
+		env = setEnvironment(env, "CODEX_HOME", shared)
+		env = setEnvironment(env, "CODEX_SQLITE_HOME", shared)
+		env = setEnvironment(env, "CODEX_ACCOUNT", "")
+	} else if name != "" {
 		home, err := prepareHome(shared, accounts, name)
 		if err != nil {
 			return "", nil, nil, err
@@ -212,12 +223,36 @@ func nativeCommand(args []string) (string, []string, []string, error) {
 			return "", nil, nil, errors.New("CODEX_HOME does not match the selected account; run codex account NAME again")
 		}
 		env = accountEnvironment(env, home, shared, true)
+		// Named accounts must not attach to another account's shared daemon.
+		options := args
+		if end := slices.Index(options, "--"); end >= 0 {
+			options = options[:end]
+		}
+		if !slices.Contains(options, "--no-daemon") {
+			nativeArgs = append(nativeArgs, "--no-daemon")
+		}
 		nativeArgs = append(nativeArgs, configArguments(shared, true)...)
 	} else if os.Getenv("CODEX_HOME") == "" && os.Getenv("CODEX_SHARED_HOME") != "" {
 		env = setEnvironment(env, "CODEX_HOME", shared)
 	}
 	nativeArgs = append(nativeArgs, args...)
 	return binary, nativeArgs, env, nil
+}
+
+func upstreamCommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--":
+			return ""
+		case "-c", "--config", "-C", "--cd", "-p", "--profile", "-m", "--model", "-s", "--sandbox", "-a", "--ask-for-approval", "-P", "--permission-profile", "-i", "--image", "--add-dir", "--enable", "--disable", "--remote", "--remote-auth-token-env", "--local-provider":
+			i++
+		default:
+			if !strings.HasPrefix(args[i], "-") {
+				return args[i]
+			}
+		}
+	}
+	return ""
 }
 
 func (a application) doctor(args []string) error {
@@ -264,11 +299,52 @@ func runtimeBinary() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if native := installedRuntime(self); native != "" {
+		return native, nil
+	}
 	p := filepath.Join(filepath.Dir(self), "..", "libexec", "codex", "bin", "codex")
 	if executable(p) {
 		return filepath.Clean(p), nil
 	}
 	return "", errors.New("bundled Codex is missing; reinstall with brew reinstall codex-accounts")
+}
+
+func installedRuntime(self string) string {
+	selfInfo, _ := os.Stat(self)
+	for _, directory := range filepath.SplitList(os.Getenv("PATH")) {
+		if !filepath.IsAbs(directory) {
+			continue
+		}
+		candidate := filepath.Join(directory, "codex")
+		if !executable(candidate) {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			continue
+		}
+		resolved, err = filepath.Abs(resolved)
+		if err != nil || filepath.Base(resolved) == "codex-accounts" {
+			continue
+		}
+		info, err := os.Stat(resolved)
+		if err != nil || (selfInfo != nil && os.SameFile(selfInfo, info)) {
+			continue
+		}
+		// Avoid recursively invoking a user-created shell shim for this
+		// controller. Official npm launcher scripts remain supported.
+		file, err := os.Open(resolved)
+		if err != nil {
+			continue
+		}
+		prefix, readErr := io.ReadAll(io.LimitReader(file, 8192))
+		file.Close()
+		if readErr != nil || (strings.HasPrefix(string(prefix), "#!") && strings.Contains(string(prefix), "codex-accounts")) {
+			continue
+		}
+		return resolved
+	}
+	return ""
 }
 
 func executable(p string) bool {
@@ -301,8 +377,8 @@ const helpText = `codex-accounts: local Codex accounts with shared conversations
   codex-accounts continue --quota --all  Continue all quota interruptions
   codex-accounts continue --other --all  Continue all other interruptions
   codex-accounts continue UUID|--all     Continue selected work or both groups
-  codex-accounts [Codex arguments]        Run the bundled Codex CLI
-  codex-accounts doctor [--json]          Check the bundled runtime (no network)
+  codex-accounts [Codex arguments]        Run the selected native Codex CLI
+  codex-accounts doctor [--json]          Check the selected runtime (no network)
   codex-accounts shell-init zsh|bash      Print per-terminal shell integration
 
 Add once to ~/.zshrc (or use bash for ~/.bashrc):
@@ -331,7 +407,7 @@ codex() {
   case "${1-}" in
     account) shift; codex_account "$@" ;;
     continue) shift; command codex-accounts continue "$@" ;;
-    *) command codex-accounts "$@" ;;
+    *) command codex-accounts __native "$@" ;;
   esac
 }
 `

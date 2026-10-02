@@ -9,6 +9,10 @@ Homebrew also installs tmux for concurrent conversation continuation.
 Version 0.3.0 adds numbered device-code/browser authentication, grouped
 continuation menus, and `--set-default` for choosing the machine's default login.
 
+Unreleased development changes preserve upstream help/version/doctor commands
+and prefer an independently installed Codex on `PATH`. These changes are being
+tested locally and are not included in the published 0.3.0 archives.
+
 This is an independent open-source local utility, not an OpenAI product. It has
 no GUI, history server, cross-device synchronization, or background daemon.
 
@@ -219,12 +223,12 @@ execution replaces the wrapper process and preserves terminal I/O and exit codes
 | --- | --- |
 | `CODEX_SHARED_HOME` | Shared local store (default `~/.codex`) |
 | `CODEX_ACCOUNTS_DIR` | Separate credentials root (default `~/.codex-accounts`) |
-| `CODEX_ACCOUNTS_RUNTIME` | Explicit native executable override for development |
+| `CODEX_ACCOUNTS_RUNTIME` | Explicit native executable override; otherwise prefer `codex` on `PATH`, then the bundled fallback |
 | `CODEX_ACCOUNTS_TMUX_SOCKET` | Optional tmux socket name for isolated continuation sessions |
 
 Never put credential directories inside the shared store or a tracked repository.
 When shell-init overrides an older `codex()` function, commands use this package's
-bundled runtime and account feature. Earlier custom sync hooks are not invoked.
+account feature and selected native runtime. Earlier custom sync hooks are not invoked.
 Installation itself does not edit your shell profiles or existing helpers.
 
 ## Upgrade and uninstall
@@ -238,9 +242,32 @@ brew uninstall codex-accounts
 Remove the shell-init line when uninstalling. Homebrew does not delete your
 accounts, default credentials, or conversations. No upstream `codex` executable
 is overwritten: only `codex-accounts` is installed in Homebrew's `bin` directory.
-The `codex` command name is provided by the opt-in shell function. Bundled Codex
-versions are pinned and tested; updating an independently installed Codex does
-not change this package. A package release updates the tested native runtime.
+The `codex` command name is provided by the opt-in shell function. Only `account`
+and `continue` are extension commands; help, version, doctor, update, and other
+commands pass to the selected native CLI. The default environment retains native
+daemon behavior. Named accounts use `--no-daemon` to isolate their credentials.
+Installation updates use the shared installation home without changing the
+account selected in the parent shell.
+
+The runtime is chosen for each invocation: `CODEX_ACCOUNTS_RUNTIME`, an installed
+`codex` on `PATH`, then the pinned bundled fallback. Updating an independent
+Codex takes effect on the next invocation and does not require an extension
+release. Recursive shell shims and relative PATH entries are skipped.
+
+For independent Homebrew-managed CLI updates:
+
+```sh
+brew install --cask codex
+codex --version
+codex update
+```
+
+Bundled copies can be misidentified as a different Homebrew package, and an
+app-contained CLI may not support self-update. Install a normal upstream CLI
+to manage its updates separately. The extension never runs an updater during
+normal commands. `codex-accounts doctor --json` reports the actual chosen path
+and version. The bundled fallback stays pinned until a package release updates
+it. No GUI restart or account change is performed by runtime selection.
 
 ## Development and releases
 
