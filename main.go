@@ -108,11 +108,7 @@ func (a application) account(args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		w := a.out
-		if shell {
-			w = a.err
-		}
-		return a.accountMenu(shared, accounts, w)
+		return a.showStatus(a.out, shared)
 	}
 	if args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprint(a.out, helpText)
@@ -294,7 +290,7 @@ func runtimeEnvironment(binary string, env []string) []string {
 
 const helpText = `codex-accounts: local Codex accounts with shared conversations
 
-  codex-accounts account                  Current details and numbered login menu
+  codex-accounts account                  Account, workspace and remaining limits
   codex-accounts account NAME [--login]   Validate/login; choose device or browser
   codex-accounts account NAME --browser  Sign in using the local browser
   codex-accounts account NAME --device   Sign in using a device code

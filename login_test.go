@@ -96,77 +96,68 @@ func fixtureLoginCalls(t *testing.T, root string) []struct {
 	return calls
 }
 
-func TestAccountMenuCancelKeepsCredentialsAndShellOutput(t *testing.T) {
-	for _, input := range []string{"0\n", "", "invalid\n0\n"} {
-		t.Run(strings.ReplaceAll(input, "\n", "-"), func(t *testing.T) {
+func TestAccountWithoutArgsOnlyShowsStatus(t *testing.T) {
+	for _, store := range []string{"default", "named", "managed-default", "signed-out", "invalid"} {
+		t.Run(store, func(t *testing.T) {
 			root, shared, accounts := sandbox(t)
 			home := seed(t, shared, accounts, "chosen")
-			t.Setenv("CODEX_ACCOUNT", "chosen")
-			t.Setenv("CODEX_HOME", home)
-			before, _ := os.ReadFile(filepath.Join(home, "auth.json"))
+			credentialHome, expectedName := shared, ""
+			expectedHome, expectedEmail := "", ".codex@example.test"
+			switch store {
+			case "named":
+				credentialHome, expectedName = home, "chosen"
+				expectedHome, expectedEmail = home, "chosen@example.test"
+				t.Setenv("CODEX_ACCOUNT", expectedName)
+				t.Setenv("CODEX_HOME", expectedHome)
+			case "managed-default":
+				a, _, _ := testApp()
+				if _, err := a.publishDefault(shared, accounts, home); err != nil {
+					t.Fatal(err)
+				}
+				credentialHome = home
+			case "signed-out":
+				expectedEmail = ""
+			case "invalid":
+				if err := os.WriteFile(filepath.Join(shared, "auth.json"), []byte("invalid-fixture"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("CODEX_ACCOUNTS_TEST_MODE", "expired")
+				expectedEmail = ""
+			default:
+				if err := os.WriteFile(filepath.Join(shared, "auth.json"), []byte("default-fixture"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, beforeErr := os.ReadFile(filepath.Join(credentialHome, "auth.json"))
+			previousLink, _ := os.Readlink(filepath.Join(shared, "auth.json"))
 			a, out, stderr := testApp()
-			a.in = strings.NewReader(input)
-			if err := a.account([]string{"--shell"}); err != nil || out.Len() != 0 {
-				t.Fatal("cancel emitted shell code or failed", err, out.String())
+			input := strings.NewReader("2\n")
+			a.in = input
+			if err := a.account(nil); err != nil {
+				t.Fatal("status lookup failed", err, stderr.String())
 			}
-			if !strings.Contains(stderr.String(), "Environment: chosen") || !strings.Contains(stderr.String(), "0. Keep current login") {
-				t.Fatal("current details or numeric menu missing", stderr.String())
+			label := expectedName
+			if label == "" {
+				label = "default"
 			}
-			after, _ := os.ReadFile(filepath.Join(home, "auth.json"))
-			if string(after) != string(before) || len(fixtureLoginCalls(t, root)) != 0 || os.Getenv("CODEX_HOME") != home {
-				t.Fatal("cancel changed login or selected environment")
+			if !strings.Contains(out.String(), "Environment: "+label) || (expectedEmail != "" && !strings.Contains(out.String(), "Email: "+expectedEmail)) {
+				t.Fatal("current account details missing", out.String())
+			}
+			if store == "signed-out" && !strings.Contains(out.String(), "Login: not signed in") {
+				t.Fatal("signed-out state missing", out.String())
+			}
+			if store == "invalid" && !strings.Contains(out.String(), "lookup unavailable") {
+				t.Fatal("expired authentication state missing", out.String())
+			}
+			if stderr.Len() != 0 || strings.Contains(out.String(), "Select a number") || input.Len() != len("2\n") || len(fixtureLoginCalls(t, root)) != 0 {
+				t.Fatal("information command prompted or started authentication", out.String(), stderr.String())
+			}
+			after, afterErr := os.ReadFile(filepath.Join(credentialHome, "auth.json"))
+			currentLink, _ := os.Readlink(filepath.Join(shared, "auth.json"))
+			if string(before) != string(after) || os.IsNotExist(beforeErr) != os.IsNotExist(afterErr) || previousLink != currentLink || os.Getenv("CODEX_ACCOUNT") != expectedName || os.Getenv("CODEX_HOME") != expectedHome {
+				t.Fatal("information command changed credentials or selected environment")
 			}
 		})
-	}
-}
-
-func TestAccountMenuAuthenticatesCurrentCredentialStore(t *testing.T) {
-	for _, store := range []string{"default", "named", "managed-default"} {
-		for _, number := range []string{"1", "2"} {
-			t.Run(store+"-"+number, func(t *testing.T) {
-				root, shared, accounts := sandbox(t)
-				home := seed(t, shared, accounts, "chosen")
-				expectedHome, expectedName := shared, ""
-				if store == "named" {
-					expectedHome, expectedName = home, "chosen"
-					t.Setenv("CODEX_ACCOUNT", "chosen")
-					t.Setenv("CODEX_HOME", home)
-				} else if store == "managed-default" {
-					a, _, _ := testApp()
-					if _, err := a.publishDefault(shared, accounts, home); err != nil {
-						t.Fatal(err)
-					}
-					expectedHome = home
-				} else {
-					os.WriteFile(filepath.Join(shared, "auth.json"), []byte("default-fixture"), 0600)
-				}
-				previousLink, _ := os.Readlink(filepath.Join(shared, "auth.json"))
-				a, _, stderr := testApp()
-				a.in = strings.NewReader(number + "\n")
-				if err := a.account(nil); err != nil {
-					t.Fatal("numbered login failed", err, stderr.String())
-				}
-				calls := fixtureLoginCalls(t, root)
-				if len(calls) != 1 || calls[0].Home != expectedHome {
-					t.Fatal("wrong credential store", calls)
-				}
-				device := false
-				for _, arg := range calls[0].Args {
-					device = device || arg == "--device-auth"
-				}
-				if device != (number == "1") {
-					t.Fatal("wrong authentication method", calls[0].Args)
-				}
-				currentLink, _ := os.Readlink(filepath.Join(shared, "auth.json"))
-				if previousLink != currentLink || os.Getenv("CODEX_ACCOUNT") != expectedName {
-					t.Fatal("authentication changed the default role or terminal account")
-				}
-				data, _ := os.ReadFile(filepath.Join(expectedHome, "auth.json"))
-				if !strings.Contains(string(data), "logged-in") {
-					t.Fatal("selected credential file was not updated")
-				}
-			})
-		}
 	}
 }
 

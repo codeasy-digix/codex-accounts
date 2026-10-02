@@ -7,9 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 )
@@ -54,21 +52,18 @@ func (a application) chooseLoginMethod(method string) (string, error) {
 		return method, nil
 	}
 	fmt.Fprintln(a.err, "Login required. Choose authentication method:")
-	method, err := a.chooseAuthentication(false)
+	method, err := a.chooseAuthentication()
 	if err == nil && method == "" {
 		err = errors.New("login cancelled; your terminal account was not changed")
 	}
 	return method, err
 }
 
-func (a application) chooseAuthentication(optional bool) (string, error) {
+func (a application) chooseAuthentication() (string, error) {
 	fmt.Fprintln(a.err, "  1. Device code (also works over SSH)")
 	fmt.Fprintln(a.err, "  2. Browser sign-in (opens the local browser)")
-	fmt.Fprintln(a.err, "  0. Keep current login / cancel")
+	fmt.Fprintln(a.err, "  0. Cancel")
 	if a.in == nil {
-		if optional {
-			return "", nil
-		}
 		return "device", nil
 	}
 	reader := bufio.NewReader(a.in)
@@ -80,9 +75,6 @@ func (a application) chooseAuthentication(optional bool) (string, error) {
 		}
 		switch strings.ToLower(strings.TrimSpace(line)) {
 		case "":
-			if optional {
-				return "", nil
-			}
 			return "device", nil // Preserve device-code defaults for required login.
 		case "1", "d", "device", "code":
 			return "device", nil
@@ -118,82 +110,4 @@ func (a application) runLogin(binary string, args, env []string, home string) er
 		return errors.New("login did not complete; your terminal account was not changed")
 	}
 	return nil
-}
-
-func (a application) accountMenu(shared, accounts string, out io.Writer) error {
-	if err := a.showStatus(out, shared); err != nil {
-		return err
-	}
-	fmt.Fprintln(a.err, "\nRe-authenticate the current account:")
-	method, err := a.chooseAuthentication(true)
-	if err != nil || method == "" {
-		return err
-	}
-	home := os.Getenv("CODEX_HOME")
-	if home == "" {
-		home = shared
-	}
-	home, err = filepath.Abs(home)
-	if err != nil {
-		return err
-	}
-	options := loginOptions{force: true, method: method}
-	if name := os.Getenv("CODEX_ACCOUNT"); name != "" {
-		expected, err := prepareHome(shared, accounts, name)
-		if err != nil {
-			return err
-		}
-		if expected != home {
-			return errors.New("CODEX_HOME does not match the selected account")
-		}
-		info, err := a.selectAccountWithLogin(home, shared, options, nil)
-		if err != nil {
-			return err
-		}
-		printStatus(out, name, home, shared, info)
-		return nil
-	}
-	if err := realDirectory(home, true); err != nil {
-		return err
-	}
-	if home == shared {
-		lock, err := machineDefaultLock(shared)
-		if err != nil {
-			return err
-		}
-		defer lock.Close()
-		name, err := defaultAccount(shared, accounts)
-		if err != nil {
-			return err
-		}
-		if name != "" {
-			// Re-login the one credential target; the default link is unchanged.
-			credentialHome, err := prepareHome(shared, accounts, name)
-			if err != nil {
-				return err
-			}
-			info, err := a.selectAccountWithLogin(credentialHome, shared, options, nil)
-			if err != nil {
-				return err
-			}
-			printStatus(out, "", home, shared, info)
-			return nil
-		}
-	}
-	if err := privateAuth(home); err != nil {
-		return err
-	}
-	lock, err := loginLock(home)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	binary, args, env, err := nativeCommand(a.loginArguments(method))
-	if err != nil {
-		return err
-	}
-	if err := a.runLogin(binary, args[1:], setEnvironment(env, "CODEX_HOME", home), home); err != nil {
-		return err
-	}
-	return a.showStatus(out, shared)
 }

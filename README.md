@@ -47,7 +47,7 @@ line in the current terminal. Then:
 
 ```sh
 codex account ryu          # Check/login, select this terminal, and show details
-codex account             # Current details, then a numbered authentication menu
+codex account             # Current account, workspace and remaining limits
 codex account kakadais     # Another account, with the same local conversations
 codex account ryu --login  # Re-login, choosing device code or browser
 codex account ryu --browser # Explicit browser re-login
@@ -66,12 +66,8 @@ The original `codex_account` function remains available. Failed or cancelled
 login never emits environment changes. Network/service failures retain existing
 credentials and do not trigger a replacement login.
 
-With no arguments, `codex account` shows the current environment, email, plan,
-workspace and limits, then offers `1. Device code`, `2. Browser sign-in` and
-`0. Keep current login / cancel`. Choosing an authentication method signs in
-again to this terminal's current credential store. It does not designate a
-different machine default or switch the terminal to another nickname.
-Enter, EOF and `0` leave the current login unchanged.
+With no arguments, `codex account` only shows the current environment, email,
+plan, workspace and limits. It does not prompt for authentication.
 
 For `codex account NAME`, the login menu appears when credentials are missing
 or invalid, or when `--login` is requested. Enter `1` (or press Enter) for a

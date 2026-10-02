@@ -93,11 +93,15 @@ func (a application) makeDefaultWithLogin(shared, accounts, name string, shell b
 	if err != nil {
 		return err
 	}
-	lock, err := machineDefaultLock(shared)
+	fd, err := syscall.Open(filepath.Join(shared, ".account-default.lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return err
 	}
+	lock := os.NewFile(uintptr(fd), "default lock")
 	defer lock.Close()
+	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return errors.New("another terminal is changing the default account; try again when it finishes")
+	}
 	var backup string
 	info, err := a.selectAccountWithLogin(home, shared, options, func(_ statusInfo) error {
 		var err error
@@ -121,19 +125,6 @@ func (a application) makeDefaultWithLogin(shared, accounts, name string, shell b
 		fmt.Fprintln(a.out, "unset CODEX_ACCOUNT CODEX_HOME CODEX_SQLITE_HOME")
 	}
 	return nil
-}
-
-func machineDefaultLock(shared string) (*os.File, error) {
-	fd, err := syscall.Open(filepath.Join(shared, ".account-default.lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW, 0600)
-	if err != nil {
-		return nil, err
-	}
-	lock := os.NewFile(uintptr(fd), "default lock")
-	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		lock.Close()
-		return nil, errors.New("another terminal is changing the default account; try again when it finishes")
-	}
-	return lock, nil
 }
 
 func (a application) publishDefault(shared, accounts, home string) (string, error) {
