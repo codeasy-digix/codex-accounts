@@ -158,8 +158,12 @@ func TestContinueTmuxBatchUsesCallerEnvironmentAndCleansUp(t *testing.T) {
 			API  bool     `json:"apiOverridePresent"`
 		}
 		json.Unmarshal(scanner.Bytes(), &call)
-		if strings.Contains(strings.Join(call.Args, " "), "exec resume") && (call.Cwd != cwd || call.Home != home || call.API) {
-			t.Fatal("worker inherited the tmux server's account, API override, or wrong cwd")
+		if strings.Contains(strings.Join(call.Args, " "), "exec resume") {
+			actualDir, actualErr := os.Stat(call.Cwd)
+			expectedDir, expectedErr := os.Stat(cwd)
+			if actualErr != nil || expectedErr != nil || !os.SameFile(actualDir, expectedDir) || call.Home != home || call.API {
+				t.Fatalf("wrong worker environment: cwd=%s home=%s API override=%t", call.Cwd, call.Home, call.API)
+			}
 		}
 	}
 	if exec.Command("tmux", tmuxArgs("has-session", "-t", "=codex-accounts-test-anchor")...).Run() != nil {
