@@ -15,8 +15,9 @@ All development/release commands run from the repository root.
 4. Copy the release's `codex-accounts.rb` into
    `codeasy-digix/homebrew-tap/Formula/codex-accounts.rb`, run `brew style` and
    `brew test`, then commit and push the tap. The tap uses the official upstream
-   native package as a checksummed resource, so no Cask, Python, npm, compiler,
-   or existing Codex installation is required.
+native package as a checksummed resource, so no Cask, Python, npm, compiler,
+   or existing Codex installation is required. The formula installs tmux for
+   parallel conversation continuation.
 5. Verify `brew install codeasy-digix/tap/codex-accounts` on macOS and Linux, and
    test `doctor`, default status, and one existing account without a model turn.
 

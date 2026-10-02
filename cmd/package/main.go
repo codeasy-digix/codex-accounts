@@ -27,7 +27,7 @@ type manifest struct {
 }
 
 func main() {
-	version := flag.String("version", "", "release version, e.g. 0.1.1")
+	version := flag.String("version", "", "release version, e.g. 0.2.0")
 	owner := flag.String("owner", "codeasy-digix", "GitHub owner")
 	flag.Parse()
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(*version) || !regexp.MustCompile(`^[a-zA-Z0-9-]+$`).MatchString(*owner) {
@@ -89,6 +89,8 @@ func formula(version, owner string, upstream manifest, hashes map[string]string)
   version "%s"
   license "MIT"
 
+  depends_on "tmux"
+
 `, owner, version)
 	for _, osName := range []string{"macos", "linux"} {
 		goos := osName
@@ -132,7 +134,8 @@ func formula(version, owner string, upstream manifest, hashes map[string]string)
         Zsh (~/.zshrc):  eval "$(codex-accounts shell-init zsh)"
         Bash (~/.bashrc): eval "$(codex-accounts shell-init bash)"
 
-      Run: codex account NAME; codex account; codex account default
+      Run: codex account NAME; codex account NAME default; codex account default
+      Resume quota-interrupted conversations: codex continue
       Your existing conversations and account credentials are retained on uninstall.
     EOS
   end
@@ -149,6 +152,7 @@ func formula(version, owner string, upstream manifest, hashes map[string]string)
     end
     assert_match "No registered accounts", shell_output("#{bin}/codex-accounts account --list")
     assert_match "not signed in", shell_output("#{bin}/codex-accounts account")
+    assert_match "No quota-interrupted", shell_output("#{bin}/codex-accounts continue --list")
   end
 end
 `, upstream.Version)

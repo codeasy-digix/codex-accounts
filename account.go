@@ -102,6 +102,10 @@ func lookup(ctx context.Context, binary, home, shared string, isolated, refresh,
 }
 
 func (a application) selectAccount(home, shared string, force bool) (statusInfo, error) {
+	return a.selectAccountThen(home, shared, force, nil)
+}
+
+func (a application) selectAccountThen(home, shared string, force bool, after func(statusInfo) error) (statusInfo, error) {
 	lock, err := loginLock(home)
 	if err != nil {
 		return statusInfo{}, err
@@ -150,6 +154,11 @@ func (a application) selectAccount(home, shared string, force bool) (statusInfo,
 			return statusInfo{}, errors.New("login completed without a usable ChatGPT account")
 		}
 	}
+	if after != nil {
+		if err := after(info); err != nil {
+			return statusInfo{}, err
+		}
+	}
 	return info, nil
 }
 
@@ -165,6 +174,17 @@ func (a application) showStatus(w io.Writer, shared string) error {
 	}
 	home = abs
 	printEnvironment(w, name, home, shared)
+	_, accounts, err := locations()
+	if err != nil {
+		return err
+	}
+	defaultName := ""
+	if name == "" && home == shared {
+		defaultName, _ = defaultAccount(shared, accounts)
+		if defaultName != "" {
+			fmt.Fprintln(w, "Default nickname:", defaultName)
+		}
+	}
 	// A brand-new installation is valid even before its first login.
 	if _, err := os.Stat(home); os.IsNotExist(err) {
 		fmt.Fprintln(w, "Login: not signed in")
@@ -183,6 +203,16 @@ func (a application) showStatus(w io.Writer, shared string) error {
 			return err
 		}
 		lock, err = loginLock(home)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+	} else if defaultName != "" {
+		credentialHome := filepath.Join(accounts, defaultName)
+		if err := privateAuth(credentialHome); err != nil {
+			return err
+		}
+		lock, err = loginLock(credentialHome)
 		if err != nil {
 			return err
 		}

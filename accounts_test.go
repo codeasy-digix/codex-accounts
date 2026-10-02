@@ -50,8 +50,10 @@ func fixtureRuntime() {
 	if record := os.Getenv("CODEX_ACCOUNTS_TEST_LOG"); record != "" {
 		f, _ := os.OpenFile(record, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if f != nil {
+			cwd, _ := os.Getwd()
 			json.NewEncoder(f).Encode(map[string]any{
 				"args": os.Args[1:], "home": os.Getenv("CODEX_HOME"), "sqlite": os.Getenv("CODEX_SQLITE_HOME"), "pid": os.Getpid(),
+				"cwd":                cwd,
 				"apiOverridePresent": os.Getenv("OPENAI_API_KEY") != "" || os.Getenv("CODEX_API_KEY") != "" || os.Getenv("CODEX_ACCESS_TOKEN") != "",
 			})
 			f.Close()
@@ -70,6 +72,10 @@ func fixtureRuntime() {
 		return
 	}
 	if len(os.Args) < 2 || os.Args[1] != "app-server" {
+		if os.Getenv("CODEX_ACCOUNTS_TEST_MODE") == "continue" {
+			time.Sleep(800 * time.Millisecond)
+			fmt.Println("fixture continuation completed")
+		}
 		if os.Getenv("CODEX_ACCOUNTS_TEST_MODE") == "exit7" {
 			os.Exit(7)
 		}
@@ -85,6 +91,11 @@ func fixtureRuntime() {
 		var req struct {
 			ID     *int   `json:"id"`
 			Method string `json:"method"`
+			Params struct {
+				KeyPath  string `json:"keyPath"`
+				Value    string `json:"value"`
+				FilePath string `json:"filePath"`
+			} `json:"params"`
 		}
 		json.Unmarshal(scanner.Bytes(), &req)
 		if req.ID == nil {
@@ -120,6 +131,14 @@ func fixtureRuntime() {
 			}
 		case "account/rateLimits/read":
 			result = map[string]any{"rateLimits": map[string]any{"primary": map[string]any{"usedPercent": 25, "windowDurationMins": 300}, "secondary": map[string]any{"usedPercent": 12, "windowDurationMins": 10080}}}
+		case "config/value/write":
+			if mode == "policy" {
+				json.NewEncoder(os.Stdout).Encode(map[string]any{"id": *req.ID, "error": map[string]any{"message": "managed file credential policy SECRET-FIXTURE"}})
+				continue
+			}
+			data, _ := os.ReadFile(req.Params.FilePath)
+			os.WriteFile(req.Params.FilePath, append(data, []byte("\ncli_auth_credentials_store = \"file\"\n")...), 0600)
+			result = map[string]any{"status": "ok"}
 		}
 		// Interleave unrelated notifications and malformed lines, as a real stream may.
 		fmt.Println(`{"method":"account/updated","params":{}}`)
@@ -411,6 +430,10 @@ codex account ryu || exit 11
 test "$CODEX_ACCOUNT" = ryu || exit 12
 (codex account other >/dev/null) || exit 13
 test "$CODEX_ACCOUNT" = ryu || exit 14
+codex account other default || exit 18
+test -z "${CODEX_ACCOUNT-}" && test -z "${CODEX_HOME-}" || exit 19
+codex account --list | awk '/other \(default\)/ { found = 1 } END { exit !found }' || exit 20
+codex account ryu || exit 21
 codex account >/dev/null || exit 15
 codex account default || exit 16
 test -z "${CODEX_ACCOUNT-}" && test -z "${CODEX_HOME-}" || exit 17

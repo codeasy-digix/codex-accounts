@@ -4,6 +4,7 @@ Per-terminal ChatGPT accounts for Codex, with one shared local conversation stor
 macOS and Linux, Apple Silicon/ARM64 and Intel/AMD64. No Python, Node.js, or Go
 runtime to install. Homebrew installs this compiled CLI and a pinned official
 native Codex package, including its bundled tools and resources.
+Homebrew also installs tmux for concurrent conversation continuation.
 
 This is an independent open-source local utility, not an OpenAI product. It has
 no GUI, history server, cross-device synchronization, or background daemon.
@@ -46,7 +47,9 @@ codex account kakadais     # Another account, with the same local conversations
 codex account ryu --login  # Explicit device-code re-login
 codex account --list
 codex account default     # Unset account overrides and show the default account
+codex account ryu default # Make ryu the machine default, and return this shell to default
 codex resume --all
+codex continue            # Select quota-interrupted conversations to continue
 ```
 
 Each terminal exports its own `CODEX_ACCOUNT`, `CODEX_HOME`, and
@@ -61,11 +64,72 @@ An executable cannot change its parent shell's environment. Consequently plain
 selection requires the shell integration, or an explicit `--account ryu` on the
 command being run. No global "current account" file is used.
 
+## Set the machine's default login
+
+```sh
+codex account ryu default
+```
+
+This validates or device-signs-in `ryu`, backs up the previous default credentials
+and configuration under `~/.codex-accounts/.default-backups/`, and atomically
+points `~/.codex/auth.json` at `~/.codex-accounts/ryu/auth.json`. The shared home,
+conversations, SQLite state, and other account credentials keep their locations.
+Native Codex writes `cli_auth_credentials_store = "file"` to the shared config,
+preserving unrelated TOML settings and honoring managed authentication policy.
+The default and named login refer to one credential file: no active refresh-token
+copy is made. Backups are private files (0600) inside private directories (0700).
+
+`codex account default` still means "use the machine's current default in this
+terminal"; it does not change which nickname is the machine default.
+`codex account` reports the default nickname, email, and limits. `--list` marks
+the designated nickname with `(default)`.
+
+New terminals with no account overrides and native clients using `~/.codex` use
+the designated login. Restart the GUI app after switching: already-running
+clients can cache the previous authentication. Finish or stop work using the
+previous default before switching it; this command does not migrate running
+jobs to another account. Other terminals with a named account stay selected.
+If a GUI client has its own external login, provider, or `CODEX_HOME`, that
+client's own account settings still apply. `CODEX_SHARED_HOME` changes the store
+targeted by this command; it cannot redirect an independently configured GUI.
+
+## Continue conversations interrupted by quota
+
+```sh
+codex continue             # List, then enter a number, 1,3, all, or q
+codex continue --list      # List only; no account request or model turn
+codex continue --json      # Machine-readable list
+codex continue <UUID>      # Continue one listed conversation
+codex continue --all       # Continue every idle conversation in the list
+```
+
+The list is built from actual saved usage/rate-limit error events in
+`~/.codex/sessions`. User text mentioning limits and 100% usage snapshots do not
+count as interrupted jobs. A later successful turn removes a conversation from
+the list. Archived conversations and unreadable logs are excluded; unreadable
+files are counted in a warning. A private cache avoids reparsing unchanged logs.
+
+Each selected conversation resumes with `codex exec resume UUID continue` in
+its original working directory, using this terminal's selected account and
+native permission settings. No approval or sandbox bypass is added. Concurrent
+jobs receive separate tmux sessions named `codex-continue-<id>-<suffix>`; the CLI
+prints each session's attach command. Existing conversation writers and already
+launched jobs are skipped, and the stored state is checked again before launch.
+Parallel jobs use the same account quota and can edit the same project, so select
+individual jobs when their changes depend on one another.
+
+Sessions close automatically when each job exits. Private output logs and JSON
+status (`completed`/`failed`, account, exit code, times) remain under
+`~/.codex-accounts/.continue-jobs/<UUID>.log` and `<UUID>.json`. Failures and a new
+quota stop can be selected again; successful continuations update the original
+conversation. This is a single continuation request, not a retry loop or a
+guarantee that every user objective has finished.
+
 ## Storage and compatibility
 
 | Data | Location |
 | --- | --- |
-| Default account | Original `~/.codex` authentication store |
+| Default account | `~/.codex/auth.json`; after designation, a link to one named credential file |
 | Named credentials | Real `~/.codex-accounts/<name>/auth.json`, mode 0600 |
 | Account directories | Mode 0700 |
 | Conversations, archives, memory, attachments, history | Shared `~/.codex` |
@@ -103,6 +167,7 @@ execution replaces the wrapper process and preserves terminal I/O and exit codes
 | `CODEX_SHARED_HOME` | Shared local store (default `~/.codex`) |
 | `CODEX_ACCOUNTS_DIR` | Separate credentials root (default `~/.codex-accounts`) |
 | `CODEX_ACCOUNTS_RUNTIME` | Explicit native executable override for development |
+| `CODEX_ACCOUNTS_TMUX_SOCKET` | Optional tmux socket name for isolated continuation sessions |
 
 Never put credential directories inside the shared store or a tracked repository.
 When shell-init overrides an older `codex()` function, commands use this package's
@@ -132,7 +197,7 @@ Development needs Go 1.25+ only. The consumer needs neither Go nor a C compiler.
 go test -race ./...
 go vet ./...
 CGO_ENABLED=0 go build .
-go run ./cmd/package -version 0.1.1
+go run ./cmd/package -version 0.2.0
 ```
 
 The packager builds all four binaries, produces archives and SHA256SUMS, and

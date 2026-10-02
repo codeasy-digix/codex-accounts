@@ -23,7 +23,10 @@ jobs:
           cache: false
       - name: Install test shell on Linux
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh tmux
+      - name: Ensure tmux for tests on macOS
+        if: runner.os == 'macOS'
+        run: command -v tmux || brew install tmux
       - run: go vet ./...
       - run: go test -race -count=1 ./...
       - name: Download verified native runtime for integration
@@ -45,7 +48,7 @@ jobs:
           shasum -a 256 -c "$RUNNER_TEMP/native.sha256"
           mkdir "$RUNNER_TEMP/native"
           tar -xzf "$RUNNER_TEMP/native.tar.gz" -C "$RUNNER_TEMP/native"
-          CODEX_ACCOUNTS_INTEGRATION_RUNTIME="$RUNNER_TEMP/native/bin/codex" go test -run TestRealBundledRuntime -v .
+          CODEX_ACCOUNTS_INTEGRATION_RUNTIME="$RUNNER_TEMP/native/bin/codex" go test -run TestReal -v .
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

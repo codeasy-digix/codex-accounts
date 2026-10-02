@@ -27,7 +27,7 @@ type application struct {
 }
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
 	app := application{os.Stdout, os.Stderr, os.Stdin, ctx}
 	if err := app.execute(os.Args[1:]); err != nil {
@@ -56,6 +56,10 @@ func (a application) execute(args []string) error {
 			return nil
 		case "account":
 			return a.account(args[1:])
+		case "continue":
+			return a.continueAccounts(args[1:])
+		case "__continue-worker":
+			return a.continueWorker(args[1:])
 		case "doctor":
 			return a.doctor(args[1:])
 		case "--account":
@@ -83,6 +87,9 @@ func (a application) execute(args []string) error {
 				os.Setenv("CODEX_SQLITE_HOME", shared)
 			}
 			args = args[2:]
+			if len(args) > 0 && args[0] == "continue" {
+				return a.continueAccounts(args[1:])
+			}
 		case "run":
 			args = args[1:]
 		}
@@ -118,13 +125,21 @@ func (a application) account(args []string) error {
 		if len(names) == 0 {
 			fmt.Fprintln(a.out, "No registered accounts.")
 		}
+		selected, _ := defaultAccount(shared, accounts)
 		for _, name := range names {
-			fmt.Fprintln(a.out, name)
+			if name == selected {
+				fmt.Fprintln(a.out, name, "(default)")
+			} else {
+				fmt.Fprintln(a.out, name)
+			}
 		}
 		return nil
 	}
+	if len(args) == 2 && args[1] == "default" && args[0] != "default" && args[0] != "--default" {
+		return a.makeDefault(shared, accounts, args[0], shell)
+	}
 	if len(args) > 2 || (len(args) == 2 && args[1] != "--login") {
-		return errors.New("usage: codex-accounts account NAME [--login]")
+		return errors.New("usage: codex-accounts account NAME [--login|default]")
 	}
 	if args[0] == "default" || args[0] == "--default" {
 		if len(args) != 1 {
@@ -168,23 +183,32 @@ func (a application) account(args []string) error {
 }
 
 func (a application) run(args []string) error {
-	shared, accounts, err := locations()
+	binary, nativeArgs, env, err := nativeCommand(args)
 	if err != nil {
 		return err
 	}
+	// Replace the process so the native CLI owns signals, terminal I/O and exit codes.
+	return syscall.Exec(binary, nativeArgs, env)
+}
+
+func nativeCommand(args []string) (string, []string, []string, error) {
+	shared, accounts, err := locations()
+	if err != nil {
+		return "", nil, nil, err
+	}
 	binary, err := runtimeBinary()
 	if err != nil {
-		return err
+		return "", nil, nil, err
 	}
 	env := runtimeEnvironment(binary, os.Environ())
 	nativeArgs := []string{binary, "--no-daemon"}
 	if name := os.Getenv("CODEX_ACCOUNT"); name != "" {
 		home, err := prepareHome(shared, accounts, name)
 		if err != nil {
-			return err
+			return "", nil, nil, err
 		}
 		if os.Getenv("CODEX_HOME") != home {
-			return errors.New("CODEX_HOME does not match the selected account; run codex account NAME again")
+			return "", nil, nil, errors.New("CODEX_HOME does not match the selected account; run codex account NAME again")
 		}
 		env = accountEnvironment(env, home, shared, true)
 		nativeArgs = append(nativeArgs, configArguments(shared, true)...)
@@ -192,8 +216,7 @@ func (a application) run(args []string) error {
 		env = setEnvironment(env, "CODEX_HOME", shared)
 	}
 	nativeArgs = append(nativeArgs, args...)
-	// Replace the process so the native CLI owns signals, terminal I/O and exit codes.
-	return syscall.Exec(binary, nativeArgs, env)
+	return binary, nativeArgs, env, nil
 }
 
 func (a application) doctor(args []string) error {
@@ -212,11 +235,12 @@ func (a application) doctor(args []string) error {
 	if err != nil {
 		return errors.New("bundled Codex runtime could not start")
 	}
-	result := map[string]any{"version": version, "runtime": binary, "codexVersion": strings.TrimSpace(string(data)), "runtimeDependencies": []string{}}
+	_, tmuxErr := exec.LookPath("tmux")
+	result := map[string]any{"version": version, "runtime": binary, "codexVersion": strings.TrimSpace(string(data)), "runtimeDependencies": []string{"tmux"}, "tmuxAvailable": tmuxErr == nil}
 	if len(args) == 1 {
 		return json.NewEncoder(a.out).Encode(result)
 	}
-	fmt.Fprintf(a.out, "codex-accounts: %s\nRuntime: %s\n%s\nNo Python, Node.js, or Go runtime required.\n", version, binary, cleanText(string(data)))
+	fmt.Fprintf(a.out, "codex-accounts: %s\nRuntime: %s\n%s\nNo Python, Node.js, or Go runtime required. Continue uses tmux (available: %t).\n", version, binary, cleanText(string(data)), tmuxErr == nil)
 	return nil
 }
 
@@ -267,8 +291,11 @@ const helpText = `codex-accounts: local Codex accounts with shared conversations
 
   codex-accounts account                  Account, workspace and remaining limits
   codex-accounts account NAME [--login]   Validate/login with a device code
+  codex-accounts account NAME default    Set the machine's default login
   codex-accounts account --list           List account nicknames
   codex-accounts --account NAME [args]    Run Codex as NAME without shell setup
+  codex-accounts continue [--list|--json] List quota-interrupted conversations
+  codex-accounts continue UUID|--all     Continue in separate tmux sessions
   codex-accounts [Codex arguments]        Run the bundled Codex CLI
   codex-accounts doctor [--json]          Check the bundled runtime (no network)
   codex-accounts shell-init zsh|bash      Print per-terminal shell integration
@@ -276,9 +303,10 @@ const helpText = `codex-accounts: local Codex accounts with shared conversations
 Add once to ~/.zshrc (or use bash for ~/.bashrc):
   eval "$(codex-accounts shell-init zsh)"
 
-Then: codex account NAME; codex account; codex account default; codex resume --all
+Then: codex account NAME; codex account NAME default; codex account default
+      codex continue; codex resume --all
 Credentials: ~/.codex-accounts/NAME. Shared conversations: ~/.codex.
-No server synchronization or GUI. No Python/Node.js runtime required.
+No server synchronization or GUI. No Python/Node.js runtime required. Continue uses tmux.
 `
 
 const shellInit = `# codex-accounts: a separate account in each shell, with shared local history.
