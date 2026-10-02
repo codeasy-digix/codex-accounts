@@ -24,7 +24,7 @@ func parseLoginOptions(args []string) (loginOptions, error) {
 		switch arg {
 		case "--login":
 			options.force = true
-		case "default":
+		case "--set-default", "default":
 			if options.makeDefault {
 				return options, errors.New(accountUsage)
 			}
@@ -45,7 +45,7 @@ func parseLoginOptions(args []string) (loginOptions, error) {
 	return options, nil
 }
 
-const accountUsage = "usage: codex account NAME [default] [--login] [--browser|--device]"
+const accountUsage = "usage: codex account NAME [--set-default] [--login] [--browser|--device]"
 
 func (a application) chooseLoginMethod(method string) (string, error) {
 	if method != "" {

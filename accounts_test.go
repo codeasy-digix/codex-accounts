@@ -434,7 +434,7 @@ codex account ryu || exit 11
 test "$CODEX_ACCOUNT" = ryu || exit 12
 (codex account other >/dev/null) || exit 13
 test "$CODEX_ACCOUNT" = ryu || exit 14
-codex account other default || exit 18
+codex account other --set-default || exit 18
 test -z "${CODEX_ACCOUNT-}" && test -z "${CODEX_HOME-}" || exit 19
 codex account --list | awk '/other \(default\)/ { found = 1 } END { exit !found }' || exit 20
 codex account ryu || exit 21

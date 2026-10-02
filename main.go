@@ -294,7 +294,7 @@ const helpText = `codex-accounts: local Codex accounts with shared conversations
   codex-accounts account NAME [--login]   Validate/login; choose device or browser
   codex-accounts account NAME --browser  Sign in using the local browser
   codex-accounts account NAME --device   Sign in using a device code
-  codex-accounts account NAME default    Set the machine's default login
+  codex-accounts account NAME --set-default  Set the machine's default login
   codex-accounts account --list           List account nicknames
   codex-accounts --account NAME [args]    Run Codex as NAME without shell setup
   codex-accounts continue [--list|--json] List quota and other stopped work
@@ -308,10 +308,12 @@ const helpText = `codex-accounts: local Codex accounts with shared conversations
 Add once to ~/.zshrc (or use bash for ~/.bashrc):
   eval "$(codex-accounts shell-init zsh)"
 
-Then: codex account NAME; codex account NAME default; codex account default
+Then: codex account NAME; codex account NAME --set-default; codex account default
       codex continue; codex resume --all
 Credentials: ~/.codex-accounts/NAME. Shared conversations: ~/.codex.
 No server synchronization or GUI. No Python/Node.js runtime required. Continue uses tmux.
+The legacy spelling 'codex account NAME default' is also accepted.
+Support: support@digix.kr
 `
 
 const shellInit = `# codex-accounts: a separate account in each shell, with shared local history.

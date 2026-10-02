@@ -23,7 +23,7 @@ func TestPromoteDefaultSharesOneCredentialAndBacksUp(t *testing.T) {
 	os.WriteFile(filepath.Join(shared, "config.toml"), config, 0600)
 	os.WriteFile(filepath.Join(shared, "history.jsonl"), []byte("retain history\n"), 0600)
 	a, out, stderr := testApp()
-	if err := a.account([]string{"--shell", "ryu", "default"}); err != nil {
+	if err := a.account([]string{"--shell", "ryu", "--set-default"}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.TrimSpace(out.String()) != "unset CODEX_ACCOUNT CODEX_HOME CODEX_SQLITE_HOME" {
@@ -99,7 +99,7 @@ func TestDefaultPromotionFailureKeepsDefaultAndShell(t *testing.T) {
 				t.Setenv("CODEX_ACCOUNTS_TEST_MODE", mode)
 			}
 			a, out, stderr := testApp()
-			if err := a.account([]string{"--shell", "ryu", "default"}); err == nil || out.Len() != 0 {
+			if err := a.account([]string{"--shell", "ryu", "--set-default"}); err == nil || out.Len() != 0 {
 				t.Fatal("failed promotion changed shell")
 			}
 			if strings.Contains(stderr.String(), "SECRET-FIXTURE") {
@@ -112,6 +112,30 @@ func TestDefaultPromotionFailureKeepsDefaultAndShell(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSetDefaultLoginCancelKeepsDefaultAndTerminal(t *testing.T) {
+	root, shared, accounts := sandbox(t)
+	seed(t, shared, accounts, "ryu")
+	previous := seed(t, shared, accounts, "previous")
+	t.Setenv("CODEX_ACCOUNT", "previous")
+	t.Setenv("CODEX_HOME", previous)
+	old := []byte(`{"tokens":{"refresh_token":"default-fixture"}}`)
+	if err := os.WriteFile(filepath.Join(shared, "auth.json"), old, 0600); err != nil {
+		t.Fatal(err)
+	}
+	a, out, _ := testApp()
+	a.in = strings.NewReader("0\n")
+	if err := a.account([]string{"--shell", "ryu", "--set-default", "--login"}); err == nil || out.Len() != 0 {
+		t.Fatal("cancelled login changed the shell")
+	}
+	data, err := os.ReadFile(filepath.Join(shared, "auth.json"))
+	if err != nil || !bytes.Equal(data, old) || os.Getenv("CODEX_ACCOUNT") != "previous" || os.Getenv("CODEX_HOME") != previous {
+		t.Fatal("cancelled default promotion changed credentials or terminal")
+	}
+	if len(fixtureLoginCalls(t, root)) != 0 {
+		t.Fatal("cancelled default promotion started login")
 	}
 }
 

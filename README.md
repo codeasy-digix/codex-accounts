@@ -6,9 +6,8 @@ runtime to install. Homebrew installs this compiled CLI and a pinned official
 native Codex package, including its bundled tools and resources.
 Homebrew also installs tmux for concurrent conversation continuation.
 
-Browser sign-in selection and grouped continuation are development changes on
-`main` and in local builds. The Homebrew release remains 0.2.1 until the next
-release is published.
+Version 0.3.0 adds numbered device-code/browser authentication, grouped
+continuation menus, and `--set-default` for choosing the machine's default login.
 
 This is an independent open-source local utility, not an OpenAI product. It has
 no GUI, history server, cross-device synchronization, or background daemon.
@@ -54,7 +53,7 @@ codex account ryu --browser # Explicit browser re-login
 codex account ryu --device # Explicit device-code re-login
 codex account --list
 codex account default     # Unset account overrides and show the default account
-codex account ryu default # Make ryu the machine default, and return this shell to default
+codex account ryu --set-default # Make ryu the machine default, and return this shell to default
 codex resume --all
 codex continue            # Select from quota and other interrupted conversations
 ```
@@ -74,7 +73,7 @@ or invalid, or when `--login` is requested. Enter `1` (or press Enter) for a
 device code, `2` for the browser, or `0` to cancel. Invalid input asks again.
 `--browser` and `--device` explicitly request re-login
 without the menu; `--device-auth` is also accepted. These options also work with
-`codex account NAME default`. Browser sign-in runs native `codex login`; device
+`codex account NAME --set-default`. Browser sign-in runs native `codex login`; device
 sign-in adds `--device-auth`, following the official
 [Codex login commands](https://learn.chatgpt.com/docs/developer-commands#codex-login).
 
@@ -86,7 +85,7 @@ command being run. No global "current account" file is used.
 ## Set the machine's default login
 
 ```sh
-codex account ryu default
+codex account ryu --set-default
 ```
 
 This validates or signs in `ryu`, backs up the previous default credentials
@@ -100,6 +99,7 @@ copy is made. Backups are private files (0600) inside private directories (0700)
 
 `codex account default` still means "use the machine's current default in this
 terminal"; it does not change which nickname is the machine default.
+The legacy spelling `codex account NAME default` remains accepted.
 `codex account` reports the default nickname, email, and limits. `--list` marks
 the designated nickname with `(default)`.
 
@@ -250,7 +250,7 @@ Development needs Go 1.25+ only. The consumer needs neither Go nor a C compiler.
 go test -race ./...
 go vet ./...
 CGO_ENABLED=0 go build .
-go run ./cmd/package -version 0.2.1
+go run ./cmd/package -version 0.3.0
 ```
 
 The packager builds all four binaries, produces archives and SHA256SUMS, and
@@ -261,3 +261,8 @@ actual-native-runtime handshake. No live account or model request is needed.
 
 Codex and the package's upstream tools retain their own licenses. See
 [third-party notices](THIRD_PARTY_NOTICES.md).
+
+## Support
+
+Contact [support@digix.kr](mailto:support@digix.kr), or report a bug through
+[GitHub Issues](https://github.com/codeasy-digix/codex-accounts/issues).
