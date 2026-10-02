@@ -135,12 +135,6 @@ func (a application) account(args []string) error {
 		}
 		return nil
 	}
-	if len(args) == 2 && args[1] == "default" && args[0] != "default" && args[0] != "--default" {
-		return a.makeDefault(shared, accounts, args[0], shell)
-	}
-	if len(args) > 2 || (len(args) == 2 && args[1] != "--login") {
-		return errors.New("usage: codex-accounts account NAME [--login|default]")
-	}
 	if args[0] == "default" || args[0] == "--default" {
 		if len(args) != 1 {
 			return errors.New("default does not accept --login; use codex login")
@@ -160,11 +154,18 @@ func (a application) account(args []string) error {
 		}
 		return nil
 	}
+	options, err := parseLoginOptions(args[1:])
+	if err != nil {
+		return err
+	}
+	if options.makeDefault {
+		return a.makeDefaultWithLogin(shared, accounts, args[0], shell, options)
+	}
 	home, err := prepareHome(shared, accounts, args[0])
 	if err != nil {
 		return err
 	}
-	info, err := a.selectAccount(home, shared, len(args) == 2)
+	info, err := a.selectAccountWithLogin(home, shared, options, nil)
 	if err != nil {
 		return err
 	}
@@ -290,12 +291,16 @@ func runtimeEnvironment(binary string, env []string) []string {
 const helpText = `codex-accounts: local Codex accounts with shared conversations
 
   codex-accounts account                  Account, workspace and remaining limits
-  codex-accounts account NAME [--login]   Validate/login with a device code
+  codex-accounts account NAME [--login]   Validate/login; choose device or browser
+  codex-accounts account NAME --browser  Sign in using the local browser
+  codex-accounts account NAME --device   Sign in using a device code
   codex-accounts account NAME default    Set the machine's default login
   codex-accounts account --list           List account nicknames
   codex-accounts --account NAME [args]    Run Codex as NAME without shell setup
-  codex-accounts continue [--list|--json] List quota-interrupted conversations
-  codex-accounts continue UUID|--all     Continue in separate tmux sessions
+  codex-accounts continue [--list|--json] List quota and other stopped work
+  codex-accounts continue --quota --all  Continue all quota interruptions
+  codex-accounts continue --other --all  Continue all other interruptions
+  codex-accounts continue UUID|--all     Continue selected work or both groups
   codex-accounts [Codex arguments]        Run the bundled Codex CLI
   codex-accounts doctor [--json]          Check the bundled runtime (no network)
   codex-accounts shell-init zsh|bash      Print per-terminal shell integration

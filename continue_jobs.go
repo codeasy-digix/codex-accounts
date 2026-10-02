@@ -120,7 +120,7 @@ func (a application) launchContinuations(shared, accounts string, threads []inte
 		// Re-read immediately before dispatch; stale cached errors must not restart
 		// conversations completed or changed since the list was displayed.
 		current, blocked, err := inspectRollout(thread.Rollout)
-		if err != nil || !blocked || current.ID != thread.ID {
+		if err != nil || !blocked || !sameInterruptedState(current, thread) {
 			fmt.Fprintln(a.out, "Skipped changed conversation:", thread.ID)
 			continue
 		}
@@ -229,7 +229,7 @@ func (a application) continueWorker(args []string) error {
 		return errors.New("conversation became active before continuation; it was not restarted")
 	}
 	current, blocked, err := inspectRollout(job.Rollout)
-	if err != nil || !blocked || current.ID != job.Thread.ID || current.Cwd != job.Thread.Cwd {
+	if err != nil || !blocked || !sameInterruptedState(current, job.Thread) {
 		job.State, job.Exit = "failed", 1
 		return errors.New("conversation changed before continuation; it was not restarted")
 	}
@@ -266,4 +266,9 @@ func (a application) continueWorker(args []string) error {
 		return errors.New("continuation stopped; check its private log and conversation history")
 	}
 	return nil
+}
+
+func sameInterruptedState(current, listed interruptedThread) bool {
+	return current.ID == listed.ID && current.Cwd == listed.Cwd && current.Category == listed.Category &&
+		current.Reason == listed.Reason && current.Stopped == listed.Stopped
 }

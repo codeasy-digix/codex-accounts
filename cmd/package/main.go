@@ -135,7 +135,7 @@ func formula(version, owner string, upstream manifest, hashes map[string]string)
         Bash (~/.bashrc): eval "$(codex-accounts shell-init bash)"
 
       Run: codex account NAME; codex account NAME default; codex account default
-      Resume quota-interrupted conversations: codex continue
+      Resume quota and other interrupted conversations: codex continue
       Your existing conversations and account credentials are retained on uninstall.
     EOS
   end
@@ -152,7 +152,7 @@ func formula(version, owner string, upstream manifest, hashes map[string]string)
     end
     assert_match "No registered accounts", shell_output("#{bin}/codex-accounts account --list")
     assert_match "not signed in", shell_output("#{bin}/codex-accounts account")
-    assert_match "No quota-interrupted", shell_output("#{bin}/codex-accounts continue --list")
+    assert_match "No interrupted", shell_output("#{bin}/codex-accounts continue --list")
   end
 end
 `, upstream.Version)

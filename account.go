@@ -106,6 +106,10 @@ func (a application) selectAccount(home, shared string, force bool) (statusInfo,
 }
 
 func (a application) selectAccountThen(home, shared string, force bool, after func(statusInfo) error) (statusInfo, error) {
+	return a.selectAccountWithLogin(home, shared, loginOptions{force: force}, after)
+}
+
+func (a application) selectAccountWithLogin(home, shared string, options loginOptions, after func(statusInfo) error) (statusInfo, error) {
 	lock, err := loginLock(home)
 	if err != nil {
 		return statusInfo{}, err
@@ -120,7 +124,7 @@ func (a application) selectAccountThen(home, shared string, force bool, after fu
 	}
 	fmt.Fprintln(a.err, "Checking Codex account…")
 	var info statusInfo
-	if !force && savedLogin(home) {
+	if !options.force && savedLogin(home) {
 		info, err = lookup(a.ctx, binary, home, shared, true, true, true)
 		if err == nil && (info.Account == nil || info.Account.Type != "chatgpt") {
 			err = errLoginRequired
@@ -132,8 +136,18 @@ func (a application) selectAccountThen(home, shared string, force bool, after fu
 		return statusInfo{}, err
 	}
 	if errors.Is(err, errLoginRequired) {
-		fmt.Fprintln(a.err, "Sign in to this nickname using the device code shown below.")
-		args := append([]string{"login", "--device-auth"}, configArguments(shared, true)...)
+		method, err := a.chooseLoginMethod(options.method)
+		if err != nil {
+			return statusInfo{}, err
+		}
+		args := []string{"login"}
+		if method == "device" {
+			fmt.Fprintln(a.err, "Sign in to this nickname using the device code shown below.")
+			args = append(args, "--device-auth")
+		} else {
+			fmt.Fprintln(a.err, "Opening browser sign-in for this nickname…")
+		}
+		args = append(args, configArguments(shared, true)...)
 		cmd := exec.CommandContext(a.ctx, binary, args...)
 		cmd.Env = accountEnvironment(runtimeEnvironment(binary, os.Environ()), home, shared, true)
 		cmd.Dir = home

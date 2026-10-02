@@ -7,25 +7,30 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 var threadIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+const (
+	quotaCategory         = "quota"
+	otherCategory         = "other"
+	continueParserVersion = 2
+)
 
 type interruptedThread struct {
 	ID       string `json:"id"`
 	Title    string `json:"title"`
 	Cwd      string `json:"cwd"`
 	Reason   string `json:"reason"`
+	Category string `json:"category"`
 	Stopped  string `json:"stoppedAt"`
 	Rollout  string `json:"-"`
 	Modified int64  `json:"-"`
@@ -34,10 +39,28 @@ type interruptedThread struct {
 }
 
 type rolloutIndexEntry struct {
+	Parser   int               `json:"parserVersion"`
 	Size     int64             `json:"size"`
 	Modified int64             `json:"modified"`
 	Thread   interruptedThread `json:"thread"`
 	Blocked  bool              `json:"blocked"`
+}
+
+func errorKind(info json.RawMessage) string {
+	var kind string
+	if json.Unmarshal(info, &kind) != nil {
+		var object map[string]json.RawMessage
+		if json.Unmarshal(info, &object) == nil {
+			if typed, ok := object["type"]; ok {
+				json.Unmarshal(typed, &kind)
+			} else if len(object) == 1 {
+				for key := range object {
+					kind = key
+				}
+			}
+		}
+	}
+	return strings.ToLower(strings.ReplaceAll(kind, "_", ""))
 }
 
 type rolloutRecord struct {
@@ -47,9 +70,7 @@ type rolloutRecord struct {
 }
 
 func limitReason(info json.RawMessage, message string) string {
-	var kind string
-	json.Unmarshal(info, &kind)
-	kind = strings.ToLower(strings.ReplaceAll(kind, "_", ""))
+	kind := errorKind(info)
 	switch kind {
 	case "usagelimitexceeded", "usagelimitreached":
 		return "usage limit"
@@ -75,6 +96,41 @@ func limitReason(info json.RawMessage, message string) string {
 	return ""
 }
 
+func failureReason(info json.RawMessage, message string) (category, reason string, affectsTurn bool) {
+	if reason := limitReason(info, message); reason != "" {
+		return quotaCategory, reason, true
+	}
+	// These errors reject a control operation without failing the current turn.
+	switch errorKind(info) {
+	case "threadrollbackfailed", "activeturnnotsteerable":
+		return "", "", false
+	case "httpconnectionfailed", "responsestreamconnectionfailed", "responsestreamdisconnected", "responsetoomanyfailedattempts":
+		reason = "network/stream error"
+	case "unauthorized":
+		reason = "authentication error"
+	case "serveroverloaded", "internalservererror":
+		reason = "server error"
+	case "contextwindowexceeded":
+		reason = "context window exceeded"
+	case "sessionbudgetexceeded":
+		reason = "session budget exceeded"
+	case "sandboxerror":
+		reason = "sandbox error"
+	case "badrequest", "invalidprompt":
+		reason = "request error"
+	case "toomanydenials":
+		reason = "approval denied"
+	case "flexunavailable":
+		reason = "model unavailable"
+	case "cyberpolicy", "biopolicy", "misalignmentpolicyviolation":
+		reason = "policy error"
+	default:
+		reason = "execution error"
+	}
+	// Use stable labels rather than printing arbitrary provider error bodies.
+	return otherCategory, reason, true
+}
+
 func inspectRollout(p string) (interruptedThread, bool, error) {
 	var thread interruptedThread
 	f, err := os.Open(p)
@@ -84,7 +140,12 @@ func inspectRollout(p string) (interruptedThread, bool, error) {
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 65536), 16*1024*1024)
-	blocked, turnLimited := false, false
+	blocked, turnFailed := false, false
+	currentTurn := ""
+	mark := func(category, reason, timestamp string) {
+		blocked = true
+		thread.Category, thread.Reason, thread.Stopped = category, reason, timestamp
+	}
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		// Avoid decoding large tool payloads once the display title is known.
@@ -125,10 +186,13 @@ func inspectRollout(p string) (interruptedThread, bool, error) {
 			}
 		case "event_msg":
 			var event struct {
-				Type    string          `json:"type"`
-				Message string          `json:"message"`
-				Info    json.RawMessage `json:"codex_error_info"`
-				Error   *struct {
+				Type        string          `json:"type"`
+				TurnID      string          `json:"turn_id"`
+				Reason      string          `json:"reason"`
+				Message     string          `json:"message"`
+				LastMessage *string         `json:"last_agent_message"`
+				Info        json.RawMessage `json:"codex_error_info"`
+				Error       *struct {
 					Message string          `json:"message"`
 					Info    json.RawMessage `json:"codex_error_info"`
 				} `json:"error"`
@@ -142,24 +206,59 @@ func inspectRollout(p string) (interruptedThread, bool, error) {
 					thread.Title = displayTitle(event.Message)
 				}
 			case "task_started", "turn_started":
-				turnLimited = false
+				currentTurn, turnFailed = event.TurnID, false
+				mark(otherCategory, "unfinished turn; no active writer", record.Timestamp)
 			case "error":
-				if reason := limitReason(event.Info, event.Message); reason != "" {
-					blocked, turnLimited = true, true
-					thread.Reason, thread.Stopped = reason, record.Timestamp
-				} else {
-					blocked, turnLimited = false, false
+				if category, reason, affects := failureReason(event.Info, event.Message); affects {
+					mark(category, reason, record.Timestamp)
+					turnFailed = true
+				}
+			case "stream_error":
+				// Stream errors can be retried within a turn. A later successful
+				// completion clears them; an exited writer leaves other stopped work.
+				if !turnFailed {
+					mark(otherCategory, "network/stream error", record.Timestamp)
 				}
 			case "task_complete", "turn_complete", "turn_aborted":
+				if currentTurn != "" && event.TurnID != "" && currentTurn != event.TurnID {
+					continue // A late terminal marker for a replaced, older turn.
+				}
+				terminalError := false
 				if event.Error != nil {
-					reason := limitReason(event.Error.Info, event.Error.Message)
-					blocked = reason != ""
-					if blocked {
-						thread.Reason, thread.Stopped = reason, record.Timestamp
+					if category, reason, affects := failureReason(event.Error.Info, event.Error.Message); affects {
+						mark(category, reason, record.Timestamp)
+						terminalError, turnFailed = true, true
+					}
+				}
+				if terminalError {
+					continue
+				}
+				if event.Type == "turn_aborted" {
+					if !turnFailed {
+						reason := "turn aborted"
+						switch event.Reason {
+						case "interrupted":
+							reason = "user interruption"
+						case "replaced":
+							reason = "turn replaced"
+						case "review_ended":
+							reason = "review ended"
+						case "budget_limited":
+							reason = "session budget exceeded"
+						}
+						mark(otherCategory, reason, record.Timestamp)
 					}
 				} else {
-					// Legacy task_complete can follow an error without repeating it.
-					blocked = turnLimited
+					// Legacy completion may follow a fatal error without repeating it.
+					// An actual final response confirms same-turn recovery.
+					blocked = turnFailed && (event.LastMessage == nil || strings.TrimSpace(*event.LastMessage) == "")
+					if !blocked {
+						turnFailed, currentTurn = false, ""
+					}
+				}
+			case "shutdown_complete":
+				if blocked && !turnFailed {
+					mark(otherCategory, "process shut down before turn completed", record.Timestamp)
 				}
 			}
 		}
@@ -174,6 +273,11 @@ func inspectRollout(p string) (interruptedThread, bool, error) {
 		thread.Title = thread.ID
 	}
 	thread.Rollout = p
+	if blocked && thread.Stopped == "" {
+		if info, err := f.Stat(); err == nil {
+			thread.Stopped = info.ModTime().UTC().Format(time.RFC3339Nano)
+		}
+	}
 	return thread, blocked, nil
 }
 
@@ -228,13 +332,13 @@ func scanInterrupted(ctxDone <-chan struct{}, shared, accounts string) ([]interr
 			return nil
 		}
 		entry, cached := index[p]
-		if !cached || entry.Size != info.Size() || entry.Modified != info.ModTime().UnixNano() {
+		if !cached || entry.Parser != continueParserVersion || entry.Size != info.Size() || entry.Modified != info.ModTime().UnixNano() {
 			thread, blocked, err := inspectRollout(p)
 			if err != nil {
 				skipped++
 				return nil
 			}
-			entry = rolloutIndexEntry{info.Size(), info.ModTime().UnixNano(), thread, blocked}
+			entry = rolloutIndexEntry{Parser: continueParserVersion, Size: info.Size(), Modified: info.ModTime().UnixNano(), Thread: thread, Blocked: blocked}
 		}
 		entry.Thread.Rollout, entry.Thread.Modified = p, entry.Modified
 		next[p] = entry
@@ -261,7 +365,12 @@ func scanInterrupted(ctxDone <-chan struct{}, shared, accounts string) ([]interr
 		}
 		threads = append(threads, thread)
 	}
-	sort.Slice(threads, func(i, j int) bool { return threads[i].Stopped > threads[j].Stopped })
+	sort.Slice(threads, func(i, j int) bool {
+		if threads[i].Stopped == threads[j].Stopped {
+			return threads[i].ID < threads[j].ID
+		}
+		return threads[i].Stopped > threads[j].Stopped
+	})
 	return threads, skipped, nil
 }
 
@@ -275,101 +384,4 @@ func threadHasWriter(shared, id string) bool {
 	}
 	defer syscall.Close(fd)
 	return syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB) != nil
-}
-
-func (a application) continueAccounts(args []string) error {
-	if len(args) > 1 {
-		return errors.New("usage: codex continue [--list|--json|--all|UUID]")
-	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		fmt.Fprintln(a.out, "codex continue: list quota-interrupted conversations; select a number, comma-separated numbers, or all.\nUse --list or --json without starting work; --all or UUID launches tmux jobs.\nJobs use this terminal's account and each conversation's original working directory.\nCompleted tmux sessions close automatically; output and status remain in ~/.codex-accounts/.continue-jobs/.")
-		return nil
-	}
-	shared, accounts, err := locations()
-	if err != nil {
-		return err
-	}
-	threads, skipped, err := scanInterrupted(a.ctx.Done(), shared, accounts)
-	if err != nil {
-		return err
-	}
-	// Show only conversations that can be selected now. Keep the writer check
-	// outside the persistent index: a cached quota error can still be active.
-	ready := make([]interruptedThread, 0, len(threads))
-	activeSkipped := 0
-	for _, thread := range threads {
-		if thread.Active {
-			activeSkipped++
-			continue
-		}
-		ready = append(ready, thread)
-	}
-	threads = ready
-	if len(args) == 1 && args[0] == "--json" {
-		return json.NewEncoder(a.out).Encode(map[string]any{"conversations": threads, "skippedFiles": skipped, "activeSkipped": activeSkipped})
-	}
-	if activeSkipped > 0 {
-		fmt.Fprintf(a.err, "Excluded %d active conversation(s) from the stopped-work list.\n", activeSkipped)
-	}
-	if skipped > 0 {
-		fmt.Fprintf(a.err, "Skipped %d unreadable rollout files.\n", skipped)
-	}
-	if len(threads) == 0 {
-		fmt.Fprintln(a.out, "No quota-interrupted conversations found.")
-		return nil
-	}
-	for i, thread := range threads {
-		fmt.Fprintf(a.out, "%d. %s\n   %s | %s | %s\n   %s\n", i+1, thread.Title, thread.ID, thread.Reason, thread.Stopped, cleanText(thread.Cwd))
-	}
-	if len(args) == 1 && args[0] == "--list" {
-		return nil
-	}
-	selection := ""
-	if len(args) == 1 {
-		selection = args[0]
-	} else {
-		fmt.Fprint(a.out, "Continue [number(s), all, q]: ")
-		selection, err = bufio.NewReader(a.in).ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
-		}
-	}
-	selected, err := chooseThreads(threads, strings.TrimSpace(selection))
-	if err != nil || len(selected) == 0 {
-		return err
-	}
-	return a.launchContinuations(shared, accounts, selected)
-}
-
-func chooseThreads(threads []interruptedThread, selection string) ([]interruptedThread, error) {
-	if selection == "" || selection == "q" || selection == "quit" {
-		return nil, nil
-	}
-	if selection == "all" || selection == "a" || selection == "--all" {
-		return threads, nil
-	}
-	selected := make([]interruptedThread, 0)
-	seen := make(map[string]bool)
-	for _, part := range strings.Split(selection, ",") {
-		part = strings.TrimSpace(part)
-		var found *interruptedThread
-		if n, err := strconv.Atoi(part); err == nil && n > 0 && n <= len(threads) {
-			found = &threads[n-1]
-		} else {
-			for i := range threads {
-				if threads[i].ID == part {
-					found = &threads[i]
-					break
-				}
-			}
-		}
-		if found == nil {
-			return nil, fmt.Errorf("unknown conversation selection: %s", cleanText(part))
-		}
-		if !seen[found.ID] {
-			selected = append(selected, *found)
-			seen[found.ID] = true
-		}
-	}
-	return selected, nil
 }

@@ -85,6 +85,10 @@ func atomicPrivateWrite(p string, data []byte) error {
 }
 
 func (a application) makeDefault(shared, accounts, name string, shell bool) error {
+	return a.makeDefaultWithLogin(shared, accounts, name, shell, loginOptions{})
+}
+
+func (a application) makeDefaultWithLogin(shared, accounts, name string, shell bool, options loginOptions) error {
 	home, err := prepareHome(shared, accounts, name)
 	if err != nil {
 		return err
@@ -99,7 +103,7 @@ func (a application) makeDefault(shared, accounts, name string, shell bool) erro
 		return errors.New("another terminal is changing the default account; try again when it finishes")
 	}
 	var backup string
-	info, err := a.selectAccountThen(home, shared, false, func(_ statusInfo) error {
+	info, err := a.selectAccountWithLogin(home, shared, options, func(_ statusInfo) error {
 		var err error
 		backup, err = a.publishDefault(shared, accounts, home)
 		return err

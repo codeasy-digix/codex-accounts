@@ -32,27 +32,44 @@ func makeRollout(t *testing.T, shared, cwd, id, events string) string {
 }
 
 const quotaEvent = `{"timestamp":"2026-10-02T00:00:00Z","type":"event_msg","payload":{"type":"error","message":"You've hit your usage limit","codex_error_info":"UsageLimitExceeded"}}` + "\n"
+const otherEvent = `{"timestamp":"2026-10-02T00:01:00Z","type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}` + "\n"
+const startedEvent = `{"timestamp":"2026-10-02T00:00:00Z","type":"event_msg","payload":{"type":"task_started"}}` + "\n"
+const completedEvent = `{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done"}}` + "\n"
 
-func TestContinueDetectsOnlyUnresolvedLimitFailures(t *testing.T) {
+func TestContinueClassifiesStoppedWorkAndClearsSuccessfulTurns(t *testing.T) {
 	cases := []struct {
-		name, events string
-		blocked      bool
+		name, events, category string
 	}{
-		{"structured", quotaEvent, true},
-		{"legacy-complete", quotaEvent + `{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":null}}` + "\n", true},
-		{"terminal-error", `{"type":"event_msg","payload":{"type":"task_complete","error":{"codex_error_info":"rate_limit_exceeded"}}}` + "\n", true},
-		{"completed-after", quotaEvent + `{"type":"event_msg","payload":{"type":"task_started"}}` + "\n" + `{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done"}}` + "\n", false},
-		{"network-error", `{"type":"event_msg","payload":{"type":"error","message":"503 connection failure"}}` + "\n", false},
-		{"text-only", `{"type":"event_msg","payload":{"type":"user_message","message":"Explain usage limit exceeded"}}` + "\n", false},
-		{"quota-snapshot", `{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100}}}}` + "\n", false},
-		{"other-terminal-error", quotaEvent + `{"type":"event_msg","payload":{"type":"task_started"}}` + "\n" + `{"type":"event_msg","payload":{"type":"task_complete","error":{"codex_error_info":"Unauthorized"}}}` + "\n", false},
+		{"structured", quotaEvent, quotaCategory},
+		{"legacy-complete", quotaEvent + `{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":null}}` + "\n", quotaCategory},
+		{"terminal-error", `{"type":"event_msg","payload":{"type":"task_complete","error":{"codex_error_info":"rate_limit_exceeded"}}}` + "\n", quotaCategory},
+		{"completed-after", quotaEvent + startedEvent + completedEvent, ""},
+		{"network-error", `{"type":"event_msg","payload":{"type":"error","message":"503 connection failure"}}` + "\n", otherCategory},
+		{"text-only", `{"type":"event_msg","payload":{"type":"user_message","message":"Explain usage limit exceeded"}}` + "\n", ""},
+		{"quota-snapshot", `{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100}}}}` + "\n", ""},
+		{"authentication-error", quotaEvent + startedEvent + `{"type":"event_msg","payload":{"type":"task_complete","error":{"codex_error_info":"Unauthorized"}}}` + "\n", otherCategory},
+		{"user-interruption", otherEvent, otherCategory},
+		{"interruption-after-quota", quotaEvent + otherEvent, quotaCategory},
+		{"orphaned-turn", startedEvent, otherCategory},
+		{"orphaned-retry", quotaEvent + startedEvent, otherCategory},
+		{"normal-completion", startedEvent + completedEvent, ""},
+		{"aborted-then-completed", otherEvent + startedEvent + completedEvent, ""},
+		{"stream-recovered", startedEvent + `{"type":"event_msg","payload":{"type":"stream_error","message":"retrying"}}` + "\n" + completedEvent, ""},
+		{"stream-orphaned", startedEvent + `{"type":"event_msg","payload":{"type":"stream_error","message":"retrying"}}` + "\n", otherCategory},
+		{"same-turn-recovered", quotaEvent + completedEvent, ""},
+		{"process-shutdown", startedEvent + `{"type":"event_msg","payload":{"type":"shutdown_complete"}}` + "\n", otherCategory},
+		{"normal-shutdown", startedEvent + completedEvent + `{"type":"event_msg","payload":{"type":"shutdown_complete"}}` + "\n", ""},
+		{"non-turn-error", `{"type":"event_msg","payload":{"type":"error","codex_error_info":"ThreadRollbackFailed"}}` + "\n", ""},
+		{"non-steerable-error", `{"type":"event_msg","payload":{"type":"error","codex_error_info":{"ActiveTurnNotSteerable":{"turn_kind":"review"}}}}` + "\n", ""},
+		{"structured-network", `{"type":"event_msg","payload":{"type":"turn_complete","error":{"codex_error_info":{"ResponseStreamDisconnected":{"http_status_code":503}}}}}` + "\n", otherCategory},
+		{"late-old-completion", `{"type":"event_msg","payload":{"type":"task_started","turn_id":"old"}}` + "\n" + `{"type":"event_msg","payload":{"type":"task_started","turn_id":"new"}}` + "\n" + `{"type":"event_msg","payload":{"type":"task_complete","turn_id":"old"}}` + "\n", otherCategory},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root, shared, _ := sandbox(t)
 			p := makeRollout(t, shared, root, "f223f119-871b-4e7c-9b6d-214cd8e8ea23", tc.events)
 			thread, blocked, err := inspectRollout(p)
-			if err != nil || blocked != tc.blocked || thread.Cwd != root || thread.Title != "Fix the fixture project" {
+			if err != nil || blocked != (tc.category != "") || (blocked && thread.Category != tc.category) || thread.Cwd != root || thread.Title != "Fix the fixture project" {
 				t.Fatalf("unexpected classification: %v %v %+v", err, blocked, thread)
 			}
 		})
@@ -89,7 +106,7 @@ func TestContinueCacheAndActiveWriterProtection(t *testing.T) {
 	f2.WriteString(appendix)
 	f2.Close()
 	a, out, _ = testApp()
-	if err := a.continueAccounts([]string{"--list"}); err != nil || !strings.Contains(out.String(), "No quota-interrupted") {
+	if err := a.continueAccounts([]string{"--list"}); err != nil || !strings.Contains(out.String(), "No interrupted") {
 		t.Fatal("cached limit survived completion", err, out.String())
 	}
 }

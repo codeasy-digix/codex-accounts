@@ -6,6 +6,10 @@ runtime to install. Homebrew installs this compiled CLI and a pinned official
 native Codex package, including its bundled tools and resources.
 Homebrew also installs tmux for concurrent conversation continuation.
 
+Browser sign-in selection and grouped continuation are development changes on
+`main` and in local builds. The Homebrew release remains 0.2.1 until the next
+release is published.
+
 This is an independent open-source local utility, not an OpenAI product. It has
 no GUI, history server, cross-device synchronization, or background daemon.
 
@@ -24,8 +28,9 @@ codex-accounts --account kakadais resume --all
 codex-accounts --account default
 ```
 
-The first use of a nickname displays OpenAI's device-code login instructions.
-Sign in to the intended ChatGPT account in your browser. A new nickname is a new
+The first use of a nickname offers device-code or browser sign-in. Device-code
+sign-in also works over SSH; browser sign-in opens the browser on the machine
+running Codex. Sign in to the intended ChatGPT account. A new nickname is a new
 credential store; no account's token is copied to another nickname.
 
 ## `codex account` in each terminal
@@ -44,12 +49,14 @@ line in the current terminal. Then:
 codex account ryu          # Check/login, select this terminal, and show details
 codex account             # Current environment, email, plan, workspace, limits
 codex account kakadais     # Another account, with the same local conversations
-codex account ryu --login  # Explicit device-code re-login
+codex account ryu --login  # Re-login, choosing device code or browser
+codex account ryu --browser # Explicit browser re-login
+codex account ryu --device # Explicit device-code re-login
 codex account --list
 codex account default     # Unset account overrides and show the default account
 codex account ryu default # Make ryu the machine default, and return this shell to default
 codex resume --all
-codex continue            # Select quota-interrupted conversations to continue
+codex continue            # Select from quota and other interrupted conversations
 ```
 
 Each terminal exports its own `CODEX_ACCOUNT`, `CODEX_HOME`, and
@@ -58,6 +65,14 @@ terminal naturally inherits its parent's environment until you switch it.
 The original `codex_account` function remains available. Failed or cancelled
 login never emits environment changes. Network/service failures retain existing
 credentials and do not trigger a replacement login.
+
+The login menu appears only when credentials are missing or invalid, or when
+`--login` is requested. Enter `1` (or press Enter) for a device code, `2` for the
+browser, or `q` to cancel. `--browser` and `--device` explicitly request re-login
+without the menu; `--device-auth` is also accepted. These options also work with
+`codex account NAME default`. Browser sign-in runs native `codex login`; device
+sign-in adds `--device-auth`, following the official
+[Codex login commands](https://learn.chatgpt.com/docs/developer-commands#codex-login).
 
 An executable cannot change its parent shell's environment. Consequently plain
 `codex-accounts account ryu` validates/logs in and displays details; per-terminal
@@ -70,7 +85,7 @@ command being run. No global "current account" file is used.
 codex account ryu default
 ```
 
-This validates or device-signs-in `ryu`, backs up the previous default credentials
+This validates or signs in `ryu`, backs up the previous default credentials
 and configuration under `~/.codex-accounts/.default-backups/`, and atomically
 points `~/.codex/auth.json` at `~/.codex-accounts/ryu/auth.json`. The shared home,
 conversations, SQLite state, and other account credentials keep their locations.
@@ -93,15 +108,19 @@ If a GUI client has its own external login, provider, or `CODEX_HOME`, that
 client's own account settings still apply. `CODEX_SHARED_HOME` changes the store
 targeted by this command; it cannot redirect an independently configured GUI.
 
-## Continue conversations interrupted by quota
+## Continue stopped conversations
 
 ```sh
-codex continue             # List, then enter a number, 1,3, all, or q
+codex continue             # Two groups; choose numbers, quota, other, all, or q
 codex continue --list      # List only; no account request or model turn
 codex continue --json      # Machine-readable list
+codex continue --quota --list # Only account usage/rate-limit interruptions
+codex continue --other --list # Only other interrupted conversations
 codex continue 1,3         # Continue selected list numbers without an input prompt
 codex continue <UUID>      # Continue one listed conversation
-codex continue --all       # Continue every idle conversation in the list
+codex continue --quota --all # Continue all idle quota interruptions
+codex continue --other --all # Continue all idle other interruptions
+codex continue --all       # Continue both groups
 ```
 
 This is a deterministic command in the external `codex-accounts` program. The
@@ -110,14 +129,23 @@ It scans, filters, prints the list and reads your selection without launching
 Codex, signing in, or asking a model to find interrupted work. Only a selection
 starts native Codex to resume the chosen conversation(s).
 
-The list is built from actual saved usage/rate-limit error events in
-`~/.codex/sessions`. User text mentioning limits and 100% usage snapshots do not
-count as interrupted jobs. A later successful turn removes a conversation from
-the list. Archived conversations and unreadable logs are excluded; unreadable
+The list is built from structured events in `~/.codex/sessions`, in two groups:
+
+- **Quota:** saved account usage/rate-limit errors that have not been resolved.
+- **Other:** user interruptions, network/authentication/execution errors, and
+  started turns that have no completion marker and no active writer after the
+  process exits. Retryable stream errors disappear after a successful completion.
+
+User text mentioning limits and 100% usage snapshots do not count as interrupted
+jobs. A later successful turn removes a conversation from the list. Archived
+conversations and unreadable logs are excluded; unreadable
 files are counted in a warning. Active conversation writers and already-running
 continuation jobs are excluded from the numbered list (`activeSkipped` in JSON).
 A private cache avoids reparsing unchanged logs; writer status is checked on
-every invocation even when the error itself is cached.
+every invocation even when the interruption itself is cached. JSON includes each
+conversation's `category` (`quota` or `other`) and a `counts` object for the
+requested groups. This uses saved execution state, not a model's judgment of
+whether the user's broader objective is finished.
 
 If an older custom `codex()` function is loaded, put the `shell-init` line after
 it. Otherwise it may forward `continue` to the native Codex prompt. You can
