@@ -47,7 +47,7 @@ line in the current terminal. Then:
 
 ```sh
 codex account ryu          # Check/login, select this terminal, and show details
-codex account             # Current environment, email, plan, workspace, limits
+codex account             # Current details, then a numbered authentication menu
 codex account kakadais     # Another account, with the same local conversations
 codex account ryu --login  # Re-login, choosing device code or browser
 codex account ryu --browser # Explicit browser re-login
@@ -66,9 +66,17 @@ The original `codex_account` function remains available. Failed or cancelled
 login never emits environment changes. Network/service failures retain existing
 credentials and do not trigger a replacement login.
 
-The login menu appears only when credentials are missing or invalid, or when
-`--login` is requested. Enter `1` (or press Enter) for a device code, `2` for the
-browser, or `q` to cancel. `--browser` and `--device` explicitly request re-login
+With no arguments, `codex account` shows the current environment, email, plan,
+workspace and limits, then offers `1. Device code`, `2. Browser sign-in` and
+`0. Keep current login / cancel`. Choosing an authentication method signs in
+again to this terminal's current credential store. It does not designate a
+different machine default or switch the terminal to another nickname.
+Enter, EOF and `0` leave the current login unchanged.
+
+For `codex account NAME`, the login menu appears when credentials are missing
+or invalid, or when `--login` is requested. Enter `1` (or press Enter) for a
+device code, `2` for the browser, or `0` to cancel. Invalid input asks again.
+`--browser` and `--device` explicitly request re-login
 without the menu; `--device-auth` is also accepted. These options also work with
 `codex account NAME default`. Browser sign-in runs native `codex login`; device
 sign-in adds `--device-auth`, following the official
@@ -111,7 +119,7 @@ targeted by this command; it cannot redirect an independently configured GUI.
 ## Continue stopped conversations
 
 ```sh
-codex continue             # Two groups; choose numbers, quota, other, all, or q
+codex continue             # Numbered conversations and numbered batch actions
 codex continue --list      # List only; no account request or model turn
 codex continue --json      # Machine-readable list
 codex continue --quota --list # Only account usage/rate-limit interruptions
@@ -128,6 +136,13 @@ shell routes `codex continue` to that program directly, just like `codex account
 It scans, filters, prints the list and reads your selection without launching
 Codex, signing in, or asking a model to find interrupted work. Only a selection
 starts native Codex to resume the chosen conversation(s).
+
+The menu numbers each conversation, followed by numbered actions for the quota
+group, the other group and all listed work. Action numbers follow the last
+conversation number. Enter one number or several separated by commas (such as
+`1,3`). Enter `0` to cancel. Invalid input asks again without starting a job;
+Enter or EOF also cancels. The `quota`, `other`, `all` and `q` shortcuts remain
+accepted, and explicit command-line flags remain available.
 
 The list is built from structured events in `~/.codex/sessions`, in two groups:
 

@@ -11,12 +11,10 @@ import (
 	"io"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 	"unicode"
 )
@@ -140,22 +138,11 @@ func (a application) selectAccountWithLogin(home, shared string, options loginOp
 		if err != nil {
 			return statusInfo{}, err
 		}
-		args := []string{"login"}
-		if method == "device" {
-			fmt.Fprintln(a.err, "Sign in to this nickname using the device code shown below.")
-			args = append(args, "--device-auth")
-		} else {
-			fmt.Fprintln(a.err, "Opening browser sign-in for this nickname…")
-		}
+		args := a.loginArguments(method)
 		args = append(args, configArguments(shared, true)...)
-		cmd := exec.CommandContext(a.ctx, binary, args...)
-		cmd.Env = accountEnvironment(runtimeEnvironment(binary, os.Environ()), home, shared, true)
-		cmd.Dir = home
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = a.in, a.err, a.err
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-		if err := cmd.Run(); err != nil {
-			return statusInfo{}, errors.New("login did not complete; your terminal account was not changed")
+		env := accountEnvironment(runtimeEnvironment(binary, os.Environ()), home, shared, true)
+		if err := a.runLogin(binary, args, env, home); err != nil {
+			return statusInfo{}, err
 		}
 		if err := privateAuth(home); err != nil {
 			return statusInfo{}, err

@@ -133,7 +133,7 @@ codex continue --list
 printf 'q\n' | codex continue
 `
 			output, err := exec.Command(shell, "-c", script).CombinedOutput()
-			if err != nil || !bytes.Contains(output, []byte(stopped)) || !bytes.Contains(output, []byte("Continue [number(s)")) || bytes.Contains(output, []byte(completed)) || bytes.Contains(output, []byte("LEGACY_CODEX_PROMPT")) {
+			if err != nil || !bytes.Contains(output, []byte(stopped)) || !bytes.Contains(output, []byte("Select a number")) || bytes.Contains(output, []byte(completed)) || bytes.Contains(output, []byte("LEGACY_CODEX_PROMPT")) {
 				t.Fatalf("menu was not controlled by the external CLI: %v %s", err, output)
 			}
 			if _, err := os.Stat(filepath.Join(root, "calls.jsonl")); !os.IsNotExist(err) {
@@ -240,7 +240,7 @@ func TestContinueSelectionAndInteractiveCancellation(t *testing.T) {
 	makeRollout(t, shared, root, "f223f119-871b-4e7c-9b6d-214cd8e8ea23", quotaEvent)
 	a, out, _ := testApp()
 	a.in = strings.NewReader("q\n")
-	if err := a.continueAccounts(nil); err != nil || !strings.Contains(out.String(), "Continue [number(s)") || strings.Contains(out.String(), "Started") {
+	if err := a.continueAccounts(nil); err != nil || !strings.Contains(out.String(), "Select a number") || strings.Contains(out.String(), "Started") {
 		t.Fatal("interactive cancel launched work", err)
 	}
 }

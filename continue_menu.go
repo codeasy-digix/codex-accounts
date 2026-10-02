@@ -59,7 +59,8 @@ func (a application) continueAccounts(args []string) error {
   --quota --all       Continue all idle quota interruptions
   --other --all       Continue all idle other interruptions
   --all               Continue both groups
-With no flags, select numbers, quota, other, all, or q in the CLI menu.
+With no flags, choose a numbered conversation or numbered batch action.
+Comma-separated numbers select several conversations; 0 cancels.
 Jobs use this terminal's account and the original working directory in separate
 tmux sessions. Finished sessions close; private logs/status remain.`)
 		return nil
@@ -118,22 +119,89 @@ tmux sessions. Finished sessions close; private logs/status remain.`)
 		return nil
 	}
 	selection := options.selection
+	actions := continueMenuActions(ready, options.category)
 	if selection == "" {
-		groups := "quota, other"
-		if options.category != "" {
-			groups = options.category
+		fmt.Fprintln(a.out, "\nActions:")
+		for i, action := range actions {
+			fmt.Fprintf(a.out, "%d. %s\n", len(ready)+i+1, action.label)
 		}
-		fmt.Fprintf(a.out, "Continue [number(s), %s, all, q]: ", groups)
-		selection, err = bufio.NewReader(a.in).ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
+		fmt.Fprintln(a.out, "0. Cancel")
+		if a.in == nil {
+			return nil
+		}
+		reader := bufio.NewReader(a.in)
+		for {
+			fmt.Fprint(a.out, "Select a number (or several: 1,3), 0 to cancel: ")
+			line, readErr := reader.ReadString('\n')
+			if readErr != nil && !errors.Is(readErr, io.EOF) {
+				return readErr
+			}
+			selected, selectionErr := chooseContinueSelection(ready, actions, strings.TrimSpace(line))
+			if selectionErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					return selectionErr
+				}
+				fmt.Fprintln(a.err, "Invalid selection. Enter a listed number, several numbers separated by commas, or 0.")
+				continue
+			}
+			if len(selected) == 0 {
+				return nil
+			}
+			return a.launchContinuations(shared, accounts, selected)
 		}
 	}
-	selected, err := chooseThreads(ready, strings.TrimSpace(selection))
+	selected, err := chooseContinueSelection(ready, actions, strings.TrimSpace(selection))
 	if err != nil || len(selected) == 0 {
 		return err
 	}
 	return a.launchContinuations(shared, accounts, selected)
+}
+
+type continueMenuAction struct{ label, selection string }
+
+func continueMenuActions(threads []interruptedThread, category string) []continueMenuAction {
+	actions := make([]continueMenuAction, 0, 3)
+	if category == "" {
+		counts := map[string]int{}
+		for _, thread := range threads {
+			counts[thread.Category]++
+		}
+		if counts[quotaCategory] > 0 {
+			actions = append(actions, continueMenuAction{fmt.Sprintf("Continue all quota interruptions (%d)", counts[quotaCategory]), quotaCategory})
+		}
+		if counts[otherCategory] > 0 {
+			actions = append(actions, continueMenuAction{fmt.Sprintf("Continue all other interruptions (%d)", counts[otherCategory]), otherCategory})
+		}
+	}
+	return append(actions, continueMenuAction{fmt.Sprintf("Continue all listed conversations (%d)", len(threads)), "all"})
+}
+
+func chooseContinueSelection(threads []interruptedThread, actions []continueMenuAction, selection string) ([]interruptedThread, error) {
+	if selection == "" || selection == "0" || selection == "q" || selection == "quit" {
+		return nil, nil
+	}
+	selected := make([]interruptedThread, 0)
+	seen := make(map[string]bool)
+	for _, part := range strings.Split(selection, ",") {
+		part = strings.TrimSpace(part)
+		if number, err := strconv.Atoi(part); err == nil && number > len(threads) && number <= len(threads)+len(actions) {
+			part = actions[number-len(threads)-1].selection
+		}
+		if part == "" || part == "0" || part == "q" || part == "quit" {
+			return nil, errors.New("cancel cannot be combined with another selection")
+		}
+		batch, err := chooseThreads(threads, part)
+		if err != nil {
+			return nil, err
+		}
+		for _, thread := range batch {
+			if !seen[thread.ID] {
+				selected = append(selected, thread)
+				seen[thread.ID] = true
+			}
+		}
+	}
+	return selected, nil
 }
 
 func chooseThreads(threads []interruptedThread, selection string) ([]interruptedThread, error) {

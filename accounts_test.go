@@ -59,11 +59,15 @@ func fixtureRuntime() {
 			f.Close()
 		}
 	}
-	if len(os.Args) > 1 && os.Args[1] == "--version" {
+	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "--no-daemon" {
+		args = args[1:]
+	}
+	if len(args) > 0 && args[0] == "--version" {
 		fmt.Println("codex-cli fixture")
 		return
 	}
-	if len(os.Args) > 1 && os.Args[1] == "login" {
+	if len(args) > 0 && args[0] == "login" {
 		if os.Getenv("CODEX_ACCOUNTS_TEST_MODE") == "cancel" {
 			os.Exit(7)
 		}
@@ -71,7 +75,7 @@ func fixtureRuntime() {
 		fmt.Println("fixture device login completed")
 		return
 	}
-	if len(os.Args) < 2 || os.Args[1] != "app-server" {
+	if len(args) == 0 || args[0] != "app-server" {
 		if os.Getenv("CODEX_ACCOUNTS_TEST_MODE") == "continue" {
 			time.Sleep(800 * time.Millisecond)
 			fmt.Println("fixture continuation completed")
