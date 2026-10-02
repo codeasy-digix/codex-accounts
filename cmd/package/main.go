@@ -27,7 +27,7 @@ type manifest struct {
 }
 
 func main() {
-	version := flag.String("version", "", "release version, e.g. 0.2.0")
+	version := flag.String("version", "", "release version, e.g. 0.2.1")
 	owner := flag.String("owner", "codeasy-digix", "GitHub owner")
 	flag.Parse()
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(*version) || !regexp.MustCompile(`^[a-zA-Z0-9-]+$`).MatchString(*owner) {

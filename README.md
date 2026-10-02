@@ -99,15 +99,29 @@ targeted by this command; it cannot redirect an independently configured GUI.
 codex continue             # List, then enter a number, 1,3, all, or q
 codex continue --list      # List only; no account request or model turn
 codex continue --json      # Machine-readable list
+codex continue 1,3         # Continue selected list numbers without an input prompt
 codex continue <UUID>      # Continue one listed conversation
 codex continue --all       # Continue every idle conversation in the list
 ```
+
+This is a deterministic command in the external `codex-accounts` program. The
+shell routes `codex continue` to that program directly, just like `codex account`.
+It scans, filters, prints the list and reads your selection without launching
+Codex, signing in, or asking a model to find interrupted work. Only a selection
+starts native Codex to resume the chosen conversation(s).
 
 The list is built from actual saved usage/rate-limit error events in
 `~/.codex/sessions`. User text mentioning limits and 100% usage snapshots do not
 count as interrupted jobs. A later successful turn removes a conversation from
 the list. Archived conversations and unreadable logs are excluded; unreadable
-files are counted in a warning. A private cache avoids reparsing unchanged logs.
+files are counted in a warning. Active conversation writers and already-running
+continuation jobs are excluded from the numbered list (`activeSkipped` in JSON).
+A private cache avoids reparsing unchanged logs; writer status is checked on
+every invocation even when the error itself is cached.
+
+If an older custom `codex()` function is loaded, put the `shell-init` line after
+it. Otherwise it may forward `continue` to the native Codex prompt. You can
+always bypass shell functions with `codex-accounts continue --list`.
 
 Each selected conversation resumes with `codex exec resume UUID continue` in
 its original working directory, using this terminal's selected account and
@@ -197,7 +211,7 @@ Development needs Go 1.25+ only. The consumer needs neither Go nor a C compiler.
 go test -race ./...
 go vet ./...
 CGO_ENABLED=0 go build .
-go run ./cmd/package -version 0.2.0
+go run ./cmd/package -version 0.2.1
 ```
 
 The packager builds all four binaries, produces archives and SHA256SUMS, and

@@ -321,12 +321,11 @@ codex_account() {
   esac
 }
 codex() {
-  if [ "${1-}" = account ]; then
-    shift
-    codex_account "$@"
-  else
-    command codex-accounts "$@"
-  fi
+  case "${1-}" in
+    account) shift; codex_account "$@" ;;
+    continue) shift; command codex-accounts continue "$@" ;;
+    *) command codex-accounts "$@" ;;
+  esac
 }
 `
 

@@ -293,8 +293,23 @@ func (a application) continueAccounts(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Show only conversations that can be selected now. Keep the writer check
+	// outside the persistent index: a cached quota error can still be active.
+	ready := make([]interruptedThread, 0, len(threads))
+	activeSkipped := 0
+	for _, thread := range threads {
+		if thread.Active {
+			activeSkipped++
+			continue
+		}
+		ready = append(ready, thread)
+	}
+	threads = ready
 	if len(args) == 1 && args[0] == "--json" {
-		return json.NewEncoder(a.out).Encode(map[string]any{"conversations": threads, "skippedFiles": skipped})
+		return json.NewEncoder(a.out).Encode(map[string]any{"conversations": threads, "skippedFiles": skipped, "activeSkipped": activeSkipped})
+	}
+	if activeSkipped > 0 {
+		fmt.Fprintf(a.err, "Excluded %d active conversation(s) from the stopped-work list.\n", activeSkipped)
 	}
 	if skipped > 0 {
 		fmt.Fprintf(a.err, "Skipped %d unreadable rollout files.\n", skipped)
@@ -304,14 +319,7 @@ func (a application) continueAccounts(args []string) error {
 		return nil
 	}
 	for i, thread := range threads {
-		flag := ""
-		if thread.Active {
-			flag = " [active; skipped]"
-		}
-		fmt.Fprintf(a.out, "%d. %s%s\n   %s | %s | %s\n   %s\n", i+1, thread.Title, flag, thread.ID, thread.Reason, thread.Stopped, cleanText(thread.Cwd))
-		if thread.Session != "" {
-			fmt.Fprintln(a.out, "   "+tmuxAttach(thread.Session))
-		}
+		fmt.Fprintf(a.out, "%d. %s\n   %s | %s | %s\n   %s\n", i+1, thread.Title, thread.ID, thread.Reason, thread.Stopped, cleanText(thread.Cwd))
 	}
 	if len(args) == 1 && args[0] == "--list" {
 		return nil

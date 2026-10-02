@@ -74,8 +74,15 @@ func TestContinueCacheAndActiveWriterProtection(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, out, _ = testApp()
-	if err := a.continueAccounts([]string{"--json"}); err != nil || !strings.Contains(out.String(), `"active":true`) {
-		t.Fatal("active thread was not protected", err, out.String())
+	if err := a.continueAccounts([]string{"--json"}); err != nil || strings.Contains(out.String(), id) || !strings.Contains(out.String(), `"activeSkipped":1`) {
+		t.Fatal("active thread was not excluded", err, out.String())
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	a, out, _ = testApp()
+	if err := a.continueAccounts([]string{"--list"}); err != nil || !strings.Contains(out.String(), id) {
+		t.Fatal("cached stopped thread did not reappear after its writer exited", err, out.String())
 	}
 	appendix := `{"type":"event_msg","payload":{"type":"task_started"}}` + "\n" + `{"type":"event_msg","payload":{"type":"task_complete"}}` + "\n"
 	f2, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0600)
@@ -84,6 +91,38 @@ func TestContinueCacheAndActiveWriterProtection(t *testing.T) {
 	a, out, _ = testApp()
 	if err := a.continueAccounts([]string{"--list"}); err != nil || !strings.Contains(out.String(), "No quota-interrupted") {
 		t.Fatal("cached limit survived completion", err, out.String())
+	}
+}
+
+func TestContinueShellControlsMenuWithoutNativeProcess(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh"} {
+		t.Run(shell, func(t *testing.T) {
+			if _, err := exec.LookPath(shell); err != nil {
+				t.Skip("shell not installed")
+			}
+			root, shared, _ := sandbox(t)
+			stopped := "f223f119-871b-4e7c-9b6d-214cd8e8ea23"
+			completed := "f223f119-871b-4e7c-9b6d-214cd8e8ea24"
+			makeRollout(t, shared, root, stopped, quotaEvent)
+			makeRollout(t, shared, root, completed, quotaEvent+`{"type":"event_msg","payload":{"type":"task_started"}}`+"\n"+`{"type":"event_msg","payload":{"type":"task_complete"}}`+"\n")
+			t.Setenv("PATH", filepath.Dir(testCLI)+":"+os.Getenv("PATH"))
+			// No native executable or login is available. Listing and cancelling
+			// must still work, and must replace an older prompt-only function.
+			t.Setenv("CODEX_ACCOUNTS_RUNTIME", filepath.Join(root, "no-native-codex"))
+			script := `set -e
+codex() { printf 'LEGACY_CODEX_PROMPT\n' >&2; return 88; }
+eval "$(codex-accounts shell-init ` + shell + `)"
+codex continue --list
+printf 'q\n' | codex continue
+`
+			output, err := exec.Command(shell, "-c", script).CombinedOutput()
+			if err != nil || !bytes.Contains(output, []byte(stopped)) || !bytes.Contains(output, []byte("Continue [number(s)")) || bytes.Contains(output, []byte(completed)) || bytes.Contains(output, []byte("LEGACY_CODEX_PROMPT")) {
+				t.Fatalf("menu was not controlled by the external CLI: %v %s", err, output)
+			}
+			if _, err := os.Stat(filepath.Join(root, "calls.jsonl")); !os.IsNotExist(err) {
+				t.Fatal("listing/cancelling started a native process")
+			}
+		})
 	}
 }
 
