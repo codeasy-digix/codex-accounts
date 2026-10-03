@@ -254,6 +254,14 @@ The runtime is chosen for each invocation: `CODEX_ACCOUNTS_RUNTIME`, an installe
 Codex takes effect on the next invocation and does not require an extension
 release. Recursive shell shims and relative PATH entries are skipped.
 
+If npm reports a successful update but `codex --version` stays old, compare it
+with `command codex --version` and `codex-accounts doctor --json`. The doctor's
+selected native path and version should match the independently installed CLI.
+Older controllers that always select their bundled runtime need a controller
+update; sourcing the shell configuration alone does not add the new resolver.
+The pinned Codex version in `codex-accounts --version` describes the bundled
+fallback, not the runtime currently selected.
+
 For independent Homebrew-managed CLI updates:
 
 ```sh
