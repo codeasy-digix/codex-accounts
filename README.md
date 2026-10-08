@@ -227,6 +227,11 @@ It requires no Python or SQLite installation. It does not wrap `codex`, change
 account selection, or run during native CLI startup or updates. No Homebrew
 release is made by building or installing this executable.
 
+Each worker uses a 256 MiB soft Go memory limit unless `GOMEMLIMIT` is explicitly
+set. A single large history bundle can exceed that limit while being processed;
+the limit mainly prevents retaining large heaps between transfers. Initial
+ingestion checks and compresses all histories and can take several minutes.
+
 Each participant keeps its own native conversation store. One participant also
 holds a private relay store; other participants connect over SSH. The relay's
 `serve` command accepts only history-storage requests over standard input and

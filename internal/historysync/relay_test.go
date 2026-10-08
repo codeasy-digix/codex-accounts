@@ -396,3 +396,50 @@ func TestSameRawHealthyProjectionReplacesGatedHeadEvenWithOldReceipt(t *testing.
 		t.Fatalf("receipt suppressed restored-index healing: %+v %+v", second, state)
 	}
 }
+
+type relayCancelNative struct {
+	*relayFakeNative
+	cancel context.CancelFunc
+}
+
+func (n *relayCancelNative) Install(_ context.Context, b *Bundle) (InstallResult, error) {
+	n.cancel()
+	return InstallResult{ID: b.Entry.ID, Status: "deferred", Digest: b.Entry.Digest}, nil
+}
+
+func TestInterruptedCyclePreservesPendingAndKnownConflictCount(t *testing.T) {
+	root := t.TempDir()
+	hub := &fileHub{store: filepath.Join(root, "hub")}
+	for i := 1; i <= 2; i++ {
+		b := relayFixture(t, fmt.Sprintf("node%d", i), i, fmt.Sprintf("version%d", i))
+		data, err := encodeBundle(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := hub.Put(context.Background(), data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	native := &relayCancelNative{relayFakeNative: &relayFakeNative{bundles: map[string]*Bundle{}}, cancel: cancel}
+	store := filepath.Join(root, "client")
+	if err := saveReport(store, CycleReport{Node: "client", ConflictsTotal: 1, HubStateCurrent: true}); err != nil {
+		t.Fatal(err)
+	}
+	relay, err := NewRelay(Config{Node: "client", Home: filepath.Join(root, "native"), Store: store, HubStore: hub.store, Enabled: true}, native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := relay.Sync(ctx, false)
+	if err == nil || !report.Interrupted || report.Pending != 1 || report.Downloaded != 1 || report.Deferred != 1 || report.ConflictsTotal != 1 || report.HubStateCurrent {
+		t.Fatalf("interrupted cycle reset counts: err=%v report=%+v", err, report)
+	}
+	saved, err := ReadStatus(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.Interrupted || saved.Pending != 1 || saved.ConflictsTotal != 1 {
+		t.Fatalf("saved interrupted report lost state: %+v", saved)
+	}
+}

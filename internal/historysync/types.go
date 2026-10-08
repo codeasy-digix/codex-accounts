@@ -63,22 +63,24 @@ type Native interface {
 }
 
 type CycleReport struct {
-	Started        time.Time       `json:"started"`
-	Finished       time.Time       `json:"finished"`
-	Node           string          `json:"node"`
-	Uploaded       int             `json:"uploaded"`
-	Downloaded     int             `json:"downloaded"`
-	Unchanged      int             `json:"unchanged"`
-	Busy           int             `json:"busy"`
-	Deferred       int             `json:"deferred"`
-	Conflicts      int             `json:"conflicts"`
-	ConflictsTotal int             `json:"conflicts_total"`
-	Pending        int             `json:"pending"`
-	Installed      int             `json:"installed"`
-	Cached         int             `json:"cached"`
-	SkippedLocal   int             `json:"skipped_local"`
-	Errors         []string        `json:"errors,omitempty"`
-	Results        []InstallResult `json:"results,omitempty"`
+	Started         time.Time       `json:"started"`
+	Finished        time.Time       `json:"finished"`
+	Node            string          `json:"node"`
+	Uploaded        int             `json:"uploaded"`
+	Downloaded      int             `json:"downloaded"`
+	Unchanged       int             `json:"unchanged"`
+	Busy            int             `json:"busy"`
+	Deferred        int             `json:"deferred"`
+	Conflicts       int             `json:"conflicts"`
+	ConflictsTotal  int             `json:"conflicts_total"`
+	HubStateCurrent bool            `json:"hub_state_current"`
+	Interrupted     bool            `json:"interrupted,omitempty"`
+	Pending         int             `json:"pending"`
+	Installed       int             `json:"installed"`
+	Cached          int             `json:"cached"`
+	SkippedLocal    int             `json:"skipped_local"`
+	Errors          []string        `json:"errors,omitempty"`
+	Results         []InstallResult `json:"results,omitempty"`
 }
 
 // Decode with UseNumber so SQLite integers and nanosecond timestamps never

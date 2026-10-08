@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -19,11 +20,22 @@ import (
 )
 
 func main() {
+	configureMemoryLimit()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "codex-history-sync:", err)
 		os.Exit(1)
+	}
+}
+
+const defaultMemoryLimit int64 = 256 << 20
+
+// Each daemon and SSH serve process applies its own soft Go runtime limit.
+// Large live bundles may exceed it; an operator can select GOMEMLIMIT instead.
+func configureMemoryLimit() {
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(defaultMemoryLimit)
 	}
 }
 
@@ -107,18 +119,30 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		if stateErr != nil {
 			hubError = stateErr.Error()
 		}
+		pendingCount, err := historysync.ReadPendingCount(cfg.Store)
+		if err != nil {
+			return fmt.Errorf("read pending status: %w", err)
+		}
+		if report != nil {
+			report.HubStateCurrent = stateErr == nil
+			if stateErr == nil {
+				report.ConflictsTotal = state.ConflictsTotal
+			}
+			report.Pending = pendingCount
+		}
 		return encoder.Encode(struct {
 			Node     string                   `json:"node"`
 			Enabled  bool                     `json:"enabled"`
 			Report   *historysync.CycleReport `json:"last_report,omitempty"`
 			Hub      *historysync.HubState    `json:"hub,omitempty"`
 			HubError string                   `json:"hub_error,omitempty"`
+			Pending  int                      `json:"pending"`
 		}{cfg.Node, cfg.Enabled, report, func() *historysync.HubState {
 			if stateErr != nil {
 				return nil
 			}
 			return &state
-		}(), hubError})
+		}(), hubError, pendingCount})
 	}
 	if command != "sync" && command != "plan" && command != "daemon" {
 		return fmt.Errorf("unknown command %q", command)

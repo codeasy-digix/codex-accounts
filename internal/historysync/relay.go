@@ -163,14 +163,30 @@ func (r *Relay) Sync(ctx context.Context, dryRun bool) (report CycleReport, resu
 			return report, err
 		}
 		defer unlock()
+		if previous, err := ReadStatus(r.cfg.Store); err == nil {
+			// Preserve the last durable total if this cycle is interrupted before
+			// the hub can be refreshed. HubStateCurrent remains false until then.
+			report.ConflictsTotal = previous.ConflictsTotal
+		}
 		defer func() {
 			report.Finished = time.Now().UTC()
+			report.Interrupted = ctx.Err() != nil
+			// Local metadata remains readable after context cancellation. Refresh
+			// it on every exit, including an interrupted upload/download loop.
+			if count, err := ReadPendingCount(r.cfg.Store); err != nil {
+				if len(report.Errors) < maxReportErrors {
+					report.Errors = append(report.Errors, fmt.Sprintf("pending state: %v", err))
+				}
+				resultErr = errors.Join(resultErr, err)
+			} else {
+				report.Pending = count
+			}
 			if err := saveReport(r.cfg.Store, report); err != nil {
 				resultErr = errors.Join(resultErr, err)
 			}
 		}()
 	} else {
-		defer func() { report.Finished = time.Now().UTC() }()
+		defer func() { report.Finished = time.Now().UTC(); report.Interrupted = ctx.Err() != nil }()
 	}
 	if hub, ok := r.hub.(*sshHub); ok {
 		if err := hub.begin(ctx); err != nil {
@@ -368,14 +384,7 @@ func (r *Relay) Sync(ctx context.Context, dryRun bool) (report CycleReport, resu
 		addError("hub state", err)
 	} else {
 		report.ConflictsTotal = state.ConflictsTotal
-	}
-	if !dryRun {
-		pending := map[string]Head{}
-		if err := readOptionalJSON(filepath.Join(r.cfg.Store, "pending.json"), &pending, 16<<20); err != nil {
-			addError("pending state", err)
-		} else {
-			report.Pending = len(pending)
-		}
+		report.HubStateCurrent = true
 	}
 	if len(report.Errors) > 0 {
 		return report, fmt.Errorf("history cycle had %d errors (see last-report.json)", len(report.Errors))
@@ -461,6 +470,14 @@ func ReadStatus(store string) (*CycleReport, error) {
 		return nil, err
 	}
 	return &report, nil
+}
+
+func ReadPendingCount(store string) (int, error) {
+	pending := map[string]Head{}
+	if err := readOptionalJSON(filepath.Join(store, "pending.json"), &pending, 16<<20); err != nil {
+		return 0, err
+	}
+	return len(pending), nil
 }
 
 func (r *Relay) stagePending(ctx context.Context, head Head, data []byte) error {
@@ -937,15 +954,15 @@ func decodeBundle(data []byte) (*Bundle, error) {
 		return nil, errors.New("invalid gzip bundle")
 	}
 	defer reader.Close()
-	raw, err := io.ReadAll(io.LimitReader(reader, MaxBundleBytes+1))
-	if err != nil {
-		return nil, errors.New("damaged gzip bundle")
-	}
-	if int64(len(raw)) > MaxBundleBytes {
+	// Decode directly from the inflater rather than retaining another complete
+	// inflated JSON copy alongside the decoder buffer, raw history and projection.
+	limit := &io.LimitedReader{R: reader, N: MaxBundleBytes + 1}
+	var bundle Bundle
+	err = decodeStrictReader(limit, &bundle)
+	if limit.N == 0 {
 		return nil, errors.New("decoded bundle exceeds size limit")
 	}
-	var bundle Bundle
-	if err := decodeStrict(raw, &bundle); err != nil {
+	if err != nil {
 		return nil, errors.New("invalid bundle JSON")
 	}
 	if err := validateBundle(&bundle); err != nil {
@@ -988,7 +1005,11 @@ func validateBundle(bundle *Bundle) error {
 }
 
 func decodeStrict(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
+	return decodeStrictReader(bytes.NewReader(data), target)
+}
+
+func decodeStrictReader(reader io.Reader, target any) error {
+	decoder := json.NewDecoder(reader)
 	decoder.UseNumber()
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {

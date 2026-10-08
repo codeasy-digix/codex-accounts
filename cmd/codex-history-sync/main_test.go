@@ -8,11 +8,29 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 	"time"
 
 	"github.com/codeasy-digix/codex-accounts/internal/historysync"
 )
+
+func TestDefaultMemoryLimitAndOperatorOverride(t *testing.T) {
+	previous := debug.SetMemoryLimit(-1)
+	t.Cleanup(func() { debug.SetMemoryLimit(previous) })
+	t.Setenv("GOMEMLIMIT", "")
+	debug.SetMemoryLimit(1 << 62)
+	configureMemoryLimit()
+	if got := debug.SetMemoryLimit(-1); got != defaultMemoryLimit {
+		t.Fatalf("default memory limit = %d", got)
+	}
+	t.Setenv("GOMEMLIMIT", "512MiB")
+	debug.SetMemoryLimit(512 << 20)
+	configureMemoryLimit()
+	if got := debug.SetMemoryLimit(-1); got != 512<<20 {
+		t.Fatalf("operator memory limit was overwritten: %d", got)
+	}
+}
 
 type cliFakeNative struct{ bundle *historysync.Bundle }
 
@@ -79,6 +97,33 @@ func TestStatusAndConflictsShowDurableLedgerWithoutNativeAccess(t *testing.T) {
 	}
 	if status.Hub.ConflictsTotal != 1 || status.Enabled {
 		t.Fatal("status does not show durable conflict total", out.String())
+	}
+	// A prior interrupted report may have emitted zeros. Status overlays live
+	// metadata so an operator can still see preserved pending work and conflicts.
+	if err := os.MkdirAll(cfg.Store, 0700); err != nil {
+		t.Fatal(err)
+	}
+	reportData, _ := json.Marshal(historysync.CycleReport{Node: cfg.Node, Interrupted: true})
+	if err := os.WriteFile(filepath.Join(cfg.Store, "last-report.json"), reportData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	pendingData, _ := json.Marshal(map[string]historysync.Head{id: {Entry: historysync.Entry{ID: id}}})
+	if err := os.WriteFile(filepath.Join(cfg.Store, "pending.json"), pendingData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := run(context.Background(), []string{"status", "--config", config}, bytes.NewReader(nil), &out); err != nil {
+		t.Fatal(err)
+	}
+	var interruptedStatus struct {
+		Report  historysync.CycleReport `json:"last_report"`
+		Pending int                     `json:"pending"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &interruptedStatus); err != nil {
+		t.Fatal(err)
+	}
+	if interruptedStatus.Pending != 1 || interruptedStatus.Report.Pending != 1 || interruptedStatus.Report.ConflictsTotal != 1 || !interruptedStatus.Report.HubStateCurrent || !interruptedStatus.Report.Interrupted {
+		t.Fatal("status hid interrupted pending/conflicts", out.String())
 	}
 	if _, err := os.Stat(cfg.Home); !os.IsNotExist(err) {
 		t.Fatal("status accessed native state", err)
