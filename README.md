@@ -13,8 +13,11 @@ Unreleased development changes preserve upstream help/version/doctor commands
 and prefer an independently installed Codex on `PATH`. These changes are being
 tested locally and are not included in the published 0.3.0 archives.
 
-This is an independent open-source local utility, not an OpenAI product. It has
-no GUI, history server, cross-device synchronization, or background daemon.
+This is an independent open-source local utility, not an OpenAI product. The
+Homebrew `codex-accounts` package has no GUI, history server, cross-device
+synchronization, or background daemon. The repository also contains a separate,
+opt-in `codex-history-sync` executable described below; release archives do not
+include or enable it.
 
 ## Install
 
@@ -216,6 +219,90 @@ displayed only when the login claim identifies the selected organization.
 
 The short-lived app-server process exits after the account request; normal Codex
 execution replaces the wrapper process and preserves terminal I/O and exit codes.
+
+### Optional standalone history relay (development)
+
+`go build ./cmd/codex-history-sync` builds a separate macOS/Linux executable.
+It requires no Python or SQLite installation. It does not wrap `codex`, change
+account selection, or run during native CLI startup or updates. No Homebrew
+release is made by building or installing this executable.
+
+Each participant keeps its own native conversation store. One participant also
+holds a private relay store; other participants connect over SSH. The relay's
+`serve` command accepts only history-storage requests over standard input and
+output. It does not expose a network listener or execute arbitrary commands.
+
+Create `~/.codex-history-sync/v2/config.json` with private file permissions:
+
+```json
+{
+  "node": "workstation",
+  "hub_ssh": "history-host",
+  "hub_store": "~/.codex-history-sync/v2/hub",
+  "hub_binary": "~/.local/bin/codex-history-sync",
+  "interval_seconds": 120,
+  "enabled": true
+}
+```
+
+On the participant that hosts the relay, omit `hub_ssh`. `home` defaults to
+`~/.codex`, and `store` defaults to `~/.codex-history-sync/v2`. Credentials, GUI
+catalogs, remote connection settings, and GUI workspace assignments are never
+transported. Store history privately; it can contain project content and secrets
+that were already present in the conversations.
+
+```sh
+codex-history-sync plan       # Inspect planned transfers
+codex-history-sync sync       # One exchange and safe publication attempt
+codex-history-sync status     # Last cycle, pending imports, durable conflicts
+codex-history-sync conflicts  # Recorded divergent versions and selected winners
+tmux new-session -d -s codex-history-sync 'codex-history-sync daemon'
+tmux attach -t codex-history-sync
+```
+
+Set `enabled` to `false` and stop the named tmux session to disable the worker.
+Changing a relay requires moving its immutable objects and head index first,
+then updating the participants' configuration. Merely pointing at an empty
+directory does not migrate the existing relay's retained revisions.
+
+The same conversation ID remains the same conversation. Selection uses actual
+persisted event timestamps, not filesystem modification times. Equal timestamps
+with different content remain a visible conflict; the destination keeps its
+existing conversation. No conflict creates a new conversation ID. Losing
+versions and the conflict ledger remain in the relay; a quiet next cycle does
+not erase them. Identical histories, acknowledged uploads and pending downloads
+are cached to avoid retransferring unchanged payloads.
+
+Native publication is conservative: while Codex GUI, CLI, or app-server
+processes are running, incoming history stays in the separate pending store.
+This includes a persistent app-server daemon even when it has no active turn.
+The worker never stops these processes. After they have exited, a later cycle
+can publish supported conversations. A history bundle alone does not synchronize
+project working trees, worktrees, external attachments, or inherited rollout
+dependencies; unsupported or incomplete dependencies stay pending with a reason.
+The native reader can restore execution permissions from saved turn metadata.
+Publication therefore also requires those permissions to match the destination
+thread. New threads require saved read-only, on-request permissions; other
+histories remain in the relay and pending store for explicit review.
+The destination's native history backfill must also be complete. Working
+directories under the source home are mapped to the destination home in the
+native index. This does not create or synchronize those project directories.
+Because raw history keeps its original provenance, resetting or rebuilding the
+native index can restore a historical source working directory; recheck paths
+before continuing work after such a rebuild.
+
+Publication preserves raw history bytes and the stable conversation ID. It
+prepares a native immutable rollout generation and its matching projection,
+then changes the selected native state pointer. Previous generations remain
+recoverable. Existing local pins, project associations, archive state and
+permission settings remain local. GUI indexes are rebuilt by the native app;
+the relay never copies another device's GUI database or marks a local thread
+as an SSH thread. Keep GUI SSH connections disabled when the connected machines
+contain replicas with identical conversation IDs.
+
+This adapter checks the reviewed native storage layout and defers unsupported
+schemas. Treat a Codex storage-format update as requiring validation before
+publication, even if the relay can still retain the incoming raw history.
 
 ### Optional environment variables
 
