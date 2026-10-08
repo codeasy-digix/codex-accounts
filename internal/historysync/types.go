@@ -34,14 +34,24 @@ type Bundle struct {
 }
 
 type Config struct {
-	Node            string `json:"node"`
-	Home            string `json:"home"`
-	Store           string `json:"store"`
-	HubSSH          string `json:"hub_ssh,omitempty"`
-	HubStore        string `json:"hub_store,omitempty"`
-	HubBinary       string `json:"hub_binary,omitempty"`
-	IntervalSeconds int    `json:"interval_seconds,omitempty"`
-	Enabled         bool   `json:"enabled"`
+	Node            string           `json:"node"`
+	Home            string           `json:"home"`
+	Store           string           `json:"store"`
+	HubSSH          string           `json:"hub_ssh,omitempty"`
+	HubStore        string           `json:"hub_store,omitempty"`
+	HubBinary       string           `json:"hub_binary,omitempty"`
+	IntervalSeconds int              `json:"interval_seconds,omitempty"`
+	Enabled         bool             `json:"enabled"`
+	NewThreadPolicy *NewThreadPolicy `json:"new_thread_policy,omitempty"`
+}
+
+// NewThreadPolicy is an explicit destination policy for absent threads only.
+// The installer verifies ConfigSHA256 against the destination's config.toml;
+// bundles cannot supply or override this policy.
+type NewThreadPolicy struct {
+	Sandbox      json.RawMessage `json:"sandbox"`
+	Approval     string          `json:"approval"`
+	ConfigSHA256 string          `json:"config_sha256"`
 }
 
 type InstallResult struct {

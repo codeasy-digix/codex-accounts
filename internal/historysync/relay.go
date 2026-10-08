@@ -300,6 +300,12 @@ func (r *Relay) Sync(ctx context.Context, dryRun bool) (report CycleReport, resu
 		addError("pending state", err)
 		return report, err
 	}
+	pauseReason := ""
+	if !dryRun {
+		if checker, ok := r.native.(publicationPauseChecker); ok {
+			pauseReason = checker.PublicationPauseReason(ctx)
+		}
+	}
 	for _, id := range sortedHeadIDs(heads) {
 		if err := ctx.Err(); err != nil {
 			return report, err
@@ -323,6 +329,12 @@ func (r *Relay) Sync(ctx context.Context, dryRun bool) (report CycleReport, resu
 			if entry.Busy {
 				report.Deferred++
 			}
+			continue
+		}
+		if pauseReason != "" && r.pendingObjectPresent(head, existingPending) {
+			report.Cached++
+			report.Deferred++
+			report.Results = append(report.Results, InstallResult{ID: id, Status: "deferred", Reason: pauseReason, Digest: head.Entry.Digest})
 			continue
 		}
 		bundle, cachedErr := r.cachedPending(head)

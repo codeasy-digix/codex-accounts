@@ -3,7 +3,9 @@ package historysync
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -117,6 +119,9 @@ func TestNativeSnapshotPublication(t *testing.T) {
 		t.Fatalf("snapshot cannot be published: %s", b.Entry.DependencyReason)
 	}
 	n := fixtureNativeAt(t, output)
+	if os.Getenv("HISTORY_SYNC_FIXTURE_PINNED_FULL_ACCESS") == "1" {
+		fixturePinnedFullAccess(t, n)
+	}
 	r, err := n.Install(context.Background(), b)
 	if err == nil && r.Status == "deferred" && strings.Contains(r.Reason, "permissions") {
 		t.Logf("snapshot archived; immutable publication safely deferred: %s", r.Reason)
@@ -733,5 +738,144 @@ func TestNativeCanonicalizesExistingLegacyPolicyStorage(t *testing.T) {
 	}
 	if _, err := nativeCanonicalSandbox(`{"type":"workspace-write"}`); err == nil {
 		t.Fatal("unsupported legacy workspace policy was accepted")
+	}
+}
+
+func fixturePinnedFullAccess(t *testing.T, n *nativeAdapter) []byte {
+	t.Helper()
+	raw := []byte("sandbox_mode = \"danger-full-access\"\napproval_policy = \"never\"\n")
+	if err := os.WriteFile(filepath.Join(n.cfg.Home, "config.toml"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(raw)
+	n.cfg.NewThreadPolicy = &NewThreadPolicy{Sandbox: json.RawMessage(`{"type":"disabled"}`), Approval: "never", ConfigSHA256: hex.EncodeToString(hash[:])}
+	return raw
+}
+
+func fixtureFullAccessBundle(t *testing.T) *Bundle {
+	t.Helper()
+	b := fixtureBundle(t, "paginated", 0)
+	line, err := json.Marshal(map[string]any{"type": "turn_context", "timestamp": time.Unix(0, b.Entry.LastEventNS).UTC().Format(time.RFC3339Nano), "ordinal": int64(8), "payload": map[string]any{"sandbox_policy": map[string]any{"type": "danger-full-access"}, "permission_profile": map[string]any{"type": "disabled"}, "approval_policy": "never"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Raw = append(b.Raw, append(line, '\n')...)
+	info, err := inspectNativeRaw(b.Raw, b.Entry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Entry.Digest = info.digest
+	b.History["thread_history_projection_state"][0]["next_rollout_byte_offset"] = int64(len(b.Raw))
+	b.History["thread_history_projection_state"][0]["next_rollout_ordinal"] = int64(9)
+	return b
+}
+
+func TestNativePinnedDestinationNewThreadPolicy(t *testing.T) {
+	for _, mode := range []string{"matching", "config_drift", "drift_before_commit", "raw_mismatch"} {
+		t.Run(mode, func(t *testing.T) {
+			n := fixtureNative(t)
+			nativeConfig := fixturePinnedFullAccess(t, n)
+			b := fixtureFullAccessBundle(t)
+			changed := []byte("sandbox_mode = \"read-only\"\napproval_policy = \"on-request\"\n")
+			switch mode {
+			case "config_drift":
+				if err := os.WriteFile(filepath.Join(n.cfg.Home, "config.toml"), changed, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "drift_before_commit":
+				n.publicationHook = func(phase string) error {
+					if phase == "projection_ready" {
+						return os.WriteFile(filepath.Join(n.cfg.Home, "config.toml"), changed, 0600)
+					}
+					return nil
+				}
+			case "raw_mismatch":
+				b = fixtureBundle(t, "paginated", 0)
+			}
+			r, err := n.Install(context.Background(), b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "matching" {
+				if r.Status != "installed" {
+					t.Fatalf("%+v", r)
+				}
+				row := fixtureReadRow(t, n)
+				if row["sandbox_policy"] != `{"type":"disabled"}` || row["approval_mode"] != "never" {
+					t.Fatal("explicit destination defaults were not used")
+				}
+				raw, err := os.ReadFile(row["rollout_path"].(string))
+				if err != nil || !bytes.Equal(raw, b.Raw) {
+					t.Fatal("raw was changed to fit a destination policy")
+				}
+				config, err := os.ReadFile(filepath.Join(n.cfg.Home, "config.toml"))
+				if err != nil || !bytes.Equal(config, nativeConfig) {
+					t.Fatal("native configuration was modified")
+				}
+			} else {
+				if r.Status != "deferred" || r.Reason == "" {
+					t.Fatalf("%+v", r)
+				}
+				if mode != "raw_mismatch" && !strings.Contains(r.Reason, "config") {
+					t.Fatalf("drift reason: %+v", r)
+				}
+				count := 0
+				_ = filepath.Walk(filepath.Join(n.cfg.Home, "sessions"), func(filename string, info os.FileInfo, err error) error {
+					if err == nil && !info.IsDir() && strings.HasSuffix(filename, ".jsonl") {
+						count++
+					}
+					return nil
+				})
+				if count != 0 {
+					t.Fatal("unsafe new-thread raw was left discoverable")
+				}
+				db, _, err := n.state(context.Background(), false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows, err := nativeRows(context.Background(), db, "SELECT COUNT(*) AS count FROM threads")
+				db.Close()
+				if err != nil || rows[0]["count"] != int64(0) {
+					t.Fatal("unsafe new-thread pointer was committed")
+				}
+			}
+		})
+	}
+}
+
+func TestNativeExistingPolicyIgnoresNewThreadPin(t *testing.T) {
+	n := fixtureNative(t)
+	ctx := context.Background()
+	if r, err := n.Install(ctx, fixtureBundle(t, "paginated", 0)); err != nil || r.Status != "installed" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	// The optional pin is deliberately invalid and config.toml absent. Existing
+	// threads must continue using their own locally selected permissions.
+	n.cfg.NewThreadPolicy = &NewThreadPolicy{Sandbox: json.RawMessage(`{"type":"disabled"}`), Approval: "never", ConfigSHA256: "stale"}
+	if r, err := n.Install(ctx, fixtureBundle(t, "paginated", time.Second)); err != nil || r.Status != "installed" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	row := fixtureReadRow(t, n)
+	if row["sandbox_policy"] != nativeReadOnlyProfile || row["approval_mode"] != "on-request" {
+		t.Fatal("new-thread policy altered existing local permissions")
+	}
+}
+
+func TestNativeNewThreadPolicyConfigRoundTrip(t *testing.T) {
+	n := fixtureNative(t)
+	fixturePinnedFullAccess(t, n)
+	raw, err := json.Marshal(n.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err := decodeJSON(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NewThreadPolicy == nil || cfg.NewThreadPolicy.ConfigSHA256 != n.cfg.NewThreadPolicy.ConfigSHA256 || !bytes.Equal(cfg.NewThreadPolicy.Sandbox, n.cfg.NewThreadPolicy.Sandbox) {
+		t.Fatal("optional destination policy was lost during JSON roundtrip")
+	}
+	if cfg, err = NormalizeConfig(cfg); err != nil || cfg.NewThreadPolicy == nil || cfg.NewThreadPolicy.Approval != "never" {
+		t.Fatalf("normalization changed optional destination policy: %+v %v", cfg, err)
 	}
 }

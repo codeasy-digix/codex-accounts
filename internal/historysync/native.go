@@ -1328,17 +1328,28 @@ func (n *nativeAdapter) Install(ctx context.Context, b *Bundle) (result InstallR
 			return result, nil
 		}
 	}
-	if reason := nativePermissionCompatibility(info, previous); reason != "" {
-		result.Reason = reason
-		return result, nil
-	}
 	localSandbox := nativeReadOnlyProfile
+	localApproval := "on-request"
+	policyPin := ""
+	destinationPolicy := previous
 	if previous != nil {
 		localSandbox, err = nativeCanonicalSandbox(previous["sandbox_policy"])
 		if err != nil {
 			result.Reason = err.Error()
 			return result, nil
 		}
+		localApproval, _ = previous["approval_mode"].(string)
+	} else {
+		localSandbox, localApproval, policyPin, err = n.newThreadPolicy()
+		if err != nil {
+			result.Reason = err.Error()
+			return result, nil
+		}
+		destinationPolicy = map[string]any{"sandbox_policy": localSandbox, "approval_mode": localApproval}
+	}
+	if reason := nativePermissionCompatibility(info, destinationPolicy); reason != "" {
+		result.Reason = reason
+		return result, nil
 	}
 	newRolloutID, err := nativeNewUUID()
 	if err != nil {
@@ -1372,6 +1383,9 @@ func (n *nativeAdapter) Install(ctx context.Context, b *Bundle) (result InstallR
 	}()
 	journalPath := filepath.Join(n.cfg.Store, "native-journal", newRolloutID+".json")
 	journal := map[string]any{"stable_id": b.Entry.ID, "rollout_id": newRolloutID, "digest": info.digest, "path": newPath, "phase": "prepared", "previous_row": previous, "stage": stagePath, "stage_object_digest": stageObjectDigest}
+	if policyPin != "" {
+		journal["new_thread_policy_config_sha256"] = policyPin
+	}
 	previousTools, err := nativeRows(ctx, tx, "SELECT * FROM thread_dynamic_tools WHERE thread_id = ?", b.Entry.ID)
 	if err != nil {
 		return result, err
@@ -1490,6 +1504,7 @@ func (n *nativeAdapter) Install(ctx context.Context, b *Bundle) (result InstallR
 		}
 	}
 	row["sandbox_policy"] = localSandbox
+	row["approval_mode"] = localApproval
 	// Keep native provenance in raw history. Only SQLite's runtime cwd maps homes.
 	if cwd, ok := row["cwd"].(string); ok {
 		row["cwd"] = nativeMapCWD(cwd, b.SourceHome, n.cfg.Home)
@@ -1555,6 +1570,12 @@ func (n *nativeAdapter) Install(ctx context.Context, b *Bundle) (result InstallR
 			return result, err
 		}
 	}
+	if policyPin != "" {
+		if err := n.verifyPolicyConfigPin(policyPin); err != nil {
+			result.Reason = err.Error()
+			return result, nil
+		}
+	}
 	running, err = n.processGuard(ctx)
 	if err != nil || running {
 		result.Reason = "native runtime started before native pointer commit"
@@ -1571,6 +1592,72 @@ func (n *nativeAdapter) Install(ctx context.Context, b *Bundle) (result InstallR
 	result.Status = "installed"
 	result.Reason = "immutable generation published with the same stable thread ID"
 	return result, nil
+}
+
+func (n *nativeAdapter) newThreadPolicy() (string, string, string, error) {
+	policy := n.cfg.NewThreadPolicy
+	if policy == nil {
+		return nativeReadOnlyProfile, "on-request", "", nil
+	}
+	if len(policy.ConfigSHA256) != sha256.Size*2 {
+		return "", "", "", errors.New("new-thread destination policy config pin is invalid")
+	}
+	if _, err := hex.DecodeString(policy.ConfigSHA256); err != nil {
+		return "", "", "", errors.New("new-thread destination policy config pin is invalid")
+	}
+	sandbox, err := nativeCanonicalSandbox(string(policy.Sandbox))
+	if err != nil {
+		return "", "", "", fmt.Errorf("new-thread destination policy: %w", err)
+	}
+	switch policy.Approval {
+	case "never", "on-request", "on-failure", "untrusted":
+	default:
+		return "", "", "", errors.New("new-thread destination approval policy is unsupported")
+	}
+	pin := strings.ToLower(policy.ConfigSHA256)
+	if err := n.verifyPolicyConfigPin(pin); err != nil {
+		return "", "", "", err
+	}
+	return sandbox, policy.Approval, pin, nil
+}
+
+func (n *nativeAdapter) verifyPolicyConfigPin(pin string) error {
+	filename := filepath.Join(n.cfg.Home, "config.toml")
+	f, err := os.Open(filename)
+	if err != nil {
+		return fmt.Errorf("new-thread destination config pin cannot be verified: %w", err)
+	}
+	defer f.Close()
+	before, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !before.Mode().IsRegular() || before.Size() > 32<<20 {
+		return errors.New("new-thread destination config is not a supported regular file")
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, 32<<20+1))
+	if err != nil {
+		return err
+	}
+	after, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	current, err := os.Stat(filename)
+	if err != nil {
+		return err
+	}
+	bino, bctime := nativeFileIdentity(before)
+	aino, actime := nativeFileIdentity(after)
+	cino, cctime := nativeFileIdentity(current)
+	if before.Size() != after.Size() || after.Size() != int64(len(raw)) || !before.ModTime().Equal(after.ModTime()) || bino != aino || bctime != actime || aino != cino || actime != cctime {
+		return errors.New("new-thread destination config changed during policy verification")
+	}
+	hash := sha256.Sum256(raw)
+	if hex.EncodeToString(hash[:]) != pin {
+		return errors.New("new-thread destination config changed; pinned policy requires review")
+	}
+	return nil
 }
 
 func nativePermissionCompatibility(info nativeRawInfo, previous map[string]any) string {

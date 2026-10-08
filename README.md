@@ -281,14 +281,36 @@ are cached to avoid retransferring unchanged payloads.
 Native publication is conservative: while Codex GUI, CLI, or app-server
 processes are running, incoming history stays in the separate pending store.
 This includes a persistent app-server daemon even when it has no active turn.
-The worker never stops these processes. After they have exited, a later cycle
+The worker never stops these processes. While publication is paused, unchanged
+pending objects are not repeatedly decoded; new heads are still received and
+validated. Cached objects receive full validation when publication resumes.
+After the native processes have exited, a later cycle
 can publish supported conversations. A history bundle alone does not synchronize
 project working trees, worktrees, external attachments, or inherited rollout
 dependencies; unsupported or incomplete dependencies stay pending with a reason.
 The native reader can restore execution permissions from saved turn metadata.
 Publication therefore also requires those permissions to match the destination
-thread. New threads require saved read-only, on-request permissions; other
-histories remain in the relay and pending store for explicit review.
+thread. New threads use read-only, on-request permissions by default. An operator
+can instead select a destination policy for new threads using `new_thread_policy`:
+
+```json
+"new_thread_policy": {
+  "sandbox": {"type": "disabled"},
+  "approval": "never",
+  "config_sha256": "SHA256_OF_DESTINATION_CONFIG_TOML"
+}
+```
+
+The example is suitable only when deliberately choosing the destination's
+existing full-access, never-ask policy. Incoming saved permissions must match
+the selected policy. The installer verifies the hash of the destination's
+`config.toml` before preparation and before commit; a changed configuration
+defers new threads until the operator reviews and updates the pin. This pin
+detects file changes; it does not evaluate selected profiles, project settings,
+managed requirements, or runtime overrides. Existing threads keep their local
+permissions, and no native configuration is changed. Unsupported or mismatched
+histories remain in the relay and pending store with a reason.
+
 The destination's native history backfill must also be complete. Working
 directories under the source home are mapped to the destination home in the
 native index. This does not create or synchronize those project directories.

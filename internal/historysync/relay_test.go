@@ -443,3 +443,112 @@ func TestInterruptedCyclePreservesPendingAndKnownConflictCount(t *testing.T) {
 		t.Fatalf("saved interrupted report lost state: %+v", saved)
 	}
 }
+
+type relayPausedNative struct {
+	*relayFakeNative
+	pause        string
+	installCalls int
+}
+
+func (n *relayPausedNative) PublicationPauseReason(context.Context) string { return n.pause }
+func (n *relayPausedNative) Install(ctx context.Context, b *Bundle) (InstallResult, error) {
+	n.installCalls++
+	if n.pause != "" {
+		return InstallResult{ID: b.Entry.ID, Status: "deferred", Reason: n.pause, Digest: b.Entry.Digest}, nil
+	}
+	return n.relayFakeNative.Install(ctx, b)
+}
+
+func TestPausedCachedPendingSkipsDecodeAndResumesFullValidation(t *testing.T) {
+	root := t.TempDir()
+	hub := &fileHub{store: filepath.Join(root, "hub")}
+	b := relayFixture(t, "remote", 1, "latest")
+	data, err := encodeBundle(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put, err := hub.Put(context.Background(), data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := &relayPausedNative{relayFakeNative: &relayFakeNative{bundles: map[string]*Bundle{}}, pause: "native Codex processes are running; publication deferred"}
+	relay, err := NewRelay(Config{Node: "local", Home: filepath.Join(root, "native"), Store: filepath.Join(root, "client"), HubStore: hub.store, Enabled: true}, n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counter := &relayCountingHub{relayHub: relay.hub}
+	relay.hub = counter
+	first := syncFake(t, relay)
+	if first.Downloaded != 1 || first.Pending != 1 || first.Deferred != 1 || n.installCalls != 1 {
+		t.Fatalf("new download was not validated/staged: %+v calls=%d", first, n.installCalls)
+	}
+	cachedPath := filepath.Join(relay.cfg.Store, "pending", objectDigest(put.Head)+".json.gz")
+	// If the paused path attempts to decode this damaged object it must fetch
+	// again. A paused cycle should only check its exact head and file presence.
+	if err := os.WriteFile(cachedPath, []byte("not a gzip bundle"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	paused := syncFake(t, relay)
+	if paused.Cached != 1 || paused.Deferred != 1 || paused.Pending != 1 || paused.Downloaded != 0 || counter.gets != 1 || n.installCalls != 1 {
+		t.Fatalf("paused cache was decoded: %+v gets=%d calls=%d", paused, counter.gets, n.installCalls)
+	}
+	n.pause = ""
+	resumed := syncFake(t, relay)
+	if resumed.Downloaded != 1 || resumed.Installed != 1 || resumed.Pending != 0 || counter.gets != 2 || n.installCalls != 2 {
+		t.Fatalf("resume skipped full cache validation/install: %+v gets=%d calls=%d", resumed, counter.gets, n.installCalls)
+	}
+	if n.bundles[relayTestID].Entry.Digest != b.Entry.Digest {
+		t.Fatal("damaged cache was installed")
+	}
+}
+
+func TestPausedPendingStillReceivesNewHead(t *testing.T) {
+	root := t.TempDir()
+	hub := &fileHub{store: filepath.Join(root, "hub")}
+	publish := func(b *Bundle) Head {
+		t.Helper()
+		data, err := encodeBundle(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		put, err := hub.Put(context.Background(), data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return put.Head
+	}
+	publish(relayFixture(t, "remote", 1, "older"))
+	n := &relayPausedNative{relayFakeNative: &relayFakeNative{bundles: map[string]*Bundle{}}, pause: "native process guard unavailable; publication deferred"}
+	relay, err := NewRelay(Config{Node: "local", Home: filepath.Join(root, "native"), Store: filepath.Join(root, "client"), HubStore: hub.store, Enabled: true}, n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncFake(t, relay)
+	newer := publish(relayFixture(t, "remote", 2, "newer"))
+	second := syncFake(t, relay)
+	if second.Downloaded != 1 || second.Cached != 0 || second.Pending != 1 || second.Deferred != 1 {
+		t.Fatalf("pause suppressed new head transfer: %+v", second)
+	}
+	pending := map[string]Head{}
+	if err := readJSON(filepath.Join(relay.cfg.Store, "pending.json"), &pending, 16<<20); err != nil {
+		t.Fatal(err)
+	}
+	if pending[relayTestID] != newer {
+		t.Fatal("pending did not follow new head")
+	}
+}
+
+func TestPublicationPauseGuardFailsClosed(t *testing.T) {
+	n := &nativeAdapter{}
+	if reason := n.PublicationPauseReason(context.Background()); reason == "" {
+		t.Fatal("missing process guard allowed publication")
+	}
+	n.processGuard = func(context.Context) (bool, error) { return true, nil }
+	if reason := n.PublicationPauseReason(context.Background()); reason == "" {
+		t.Fatal("running native processes allowed publication")
+	}
+	n.processGuard = func(context.Context) (bool, error) { return false, nil }
+	if reason := n.PublicationPauseReason(context.Background()); reason != "" {
+		t.Fatal("clear runtime did not resume", reason)
+	}
+}
