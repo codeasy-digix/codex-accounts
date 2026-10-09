@@ -261,11 +261,40 @@ codex-history-sync plan       # Inspect planned transfers
 codex-history-sync sync       # One exchange and safe publication attempt
 codex-history-sync status     # Last cycle, pending imports, durable conflicts
 codex-history-sync conflicts  # Recorded divergent versions and selected winners
-tmux new-session -d -s codex-history-sync 'codex-history-sync daemon'
-tmux attach -t codex-history-sync
 ```
 
-Set `enabled` to `false` and stop the named tmux session to disable the worker.
+For an existing, enabled relay, prepare a system service as its owner:
+
+```sh
+python3 tools/history_sync_service.py
+sudo ~/.codex-history-sync/v2/service/install-system.sh
+```
+
+The preparation tool uses only the Python standard library; the installed
+service runs the existing Go executable directly without Python or tmux.
+macOS uses a LaunchDaemon under `/Library/LaunchDaemons`; Linux uses a systemd
+system unit enabled for `multi-user.target`. Both run as the conversation
+owner, start at boot, and restart a stopped worker. Administrator access is
+required once. On a FileVault Mac, disk unlocking still happens before the OS
+can start services.
+
+The installer verifies the prepared executable, configuration and unit hashes,
+backs up a previous service definition, and gracefully stops only this owner's
+existing history worker before activation. It refuses overlapping workers.
+Existing history, account configuration and relay credentials are retained.
+
+```sh
+# macOS
+sudo launchctl print system/kr.digix.codex-history-sync
+sudo launchctl bootout system/kr.digix.codex-history-sync
+# Linux
+systemctl status codex-history-sync
+sudo systemctl stop codex-history-sync
+```
+
+To disable automatic startup, use `sudo launchctl disable
+system/kr.digix.codex-history-sync` on macOS, or `sudo systemctl disable --now
+codex-history-sync` on Linux, and set `enabled` to `false` in the relay config.
 Changing a relay requires moving its immutable objects and head index first,
 then updating the participants' configuration. Merely pointing at an empty
 directory does not migrate the existing relay's retained revisions.

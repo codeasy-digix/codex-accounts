@@ -180,7 +180,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		}
 		return err
 	}
-	// Foreground by design: the operator owns the named tmux session.
+	// The supervisor (launchd, systemd, or tmux) owns the process lifecycle.
 	encoder.SetIndent("", "")
 	for {
 		report, cycleErr := relay.Sync(ctx, false)
