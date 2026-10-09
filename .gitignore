@@ -1,3 +1,4 @@
 /dist/
 /codex-accounts
 .DS_Store
+__pycache__/
