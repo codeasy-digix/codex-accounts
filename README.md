@@ -366,7 +366,7 @@ publication, even if the relay can still retain the incoming raw history.
 | --- | --- |
 | `CODEX_SHARED_HOME` | Shared local store (default `~/.codex`) |
 | `CODEX_ACCOUNTS_DIR` | Separate credentials root (default `~/.codex-accounts`) |
-| `CODEX_ACCOUNTS_RUNTIME` | Explicit native executable override; otherwise prefer `codex` on `PATH`, then the bundled fallback |
+| `CODEX_ACCOUNTS_RUNTIME` | Explicit native executable override; otherwise use the shared daemon package, then `codex` on `PATH`, then the bundled fallback |
 | `CODEX_ACCOUNTS_TMUX_SOCKET` | Optional tmux socket name for isolated continuation sessions |
 
 Never put credential directories inside the shared store or a tracked repository.
@@ -386,26 +386,43 @@ Remove the shell-init line when uninstalling. Homebrew does not delete your
 accounts, default credentials, or conversations. No upstream `codex` executable
 is overwritten: only `codex-accounts` is installed in Homebrew's `bin` directory.
 The `codex` command name is provided by the opt-in shell function. Only `account`
-and `continue` are extension commands; help, version, doctor, update, and other
+and `continue` are extension commands; help, version, doctor, and other
 commands pass to the selected native CLI. The default environment retains native
 daemon behavior. Named accounts use `--no-daemon` to isolate their credentials.
 Installation updates use the shared installation home without changing the
 account selected in the parent shell.
 
-The runtime is chosen for each invocation: `CODEX_ACCOUNTS_RUNTIME`, an installed
-`codex` on `PATH`, then the pinned bundled fallback. Updating an independent
-Codex takes effect on the next invocation and does not require an extension
-release. Recursive shell shims and relative PATH entries are skipped.
+The runtime is chosen for each invocation: `CODEX_ACCOUNTS_RUNTIME`, the official
+package under `~/.codex/packages/app-server-daemon`, an installed `codex` on
+`PATH`, then the pinned bundled fallback. Default and named accounts use the same
+package regardless of npm, NVM, or Homebrew PATH order. An explicit override
+remains authoritative. Recursive shell shims and relative PATH entries are skipped.
+
+When a managed daemon PID file exists, selection runs the native read-only
+`app-server daemon version` command. If an update has installed a newer package
+while an older daemon is still running, account sessions use that running
+release. Selection never starts, restarts, updates, or logs into a server. An
+unreadable version response or missing running release produces an error rather
+than silently choosing an incompatible CLI.
+
+With a managed package selected, `codex update` forwards to the native
+`app-server daemon update` command in the shared installation home. This updates
+the one package used by both the CLI and daemon; it may interrupt running daemon
+work and retains upstream confirmation. Normal launches do not run an updater.
+Without a managed package, updates retain the selected CLI's native behavior.
 
 If npm reports a successful update but `codex --version` stays old, compare it
 with `command codex --version` and `codex-accounts doctor --json`. The doctor's
-selected native path and version should match the independently installed CLI.
+selected path, `runtimeSource`, and version identify the actual shared package.
+`command codex` bypasses the account wrapper and can still select another CLI
+from PATH; it is not the unified account entry point.
 Older controllers that always select their bundled runtime need a controller
 update; sourcing the shell configuration alone does not add the new resolver.
 The pinned Codex version in `codex-accounts --version` describes the bundled
 fallback, not the runtime currently selected.
 
-For independent Homebrew-managed CLI updates:
+Without a managed daemon package, an independent Homebrew CLI can provide the
+initial runtime:
 
 ```sh
 brew install --cask codex
@@ -414,10 +431,11 @@ codex update
 ```
 
 Bundled copies can be misidentified as a different Homebrew package, and an
-app-contained CLI may not support self-update. Install a normal upstream CLI
-to manage its updates separately. The extension never runs an updater during
-normal commands. `codex-accounts doctor --json` reports the actual chosen path
-and version. The bundled fallback stays pinned until a package release updates
+app-contained CLI may not support self-update. Once the official daemon package
+is installed, account execution and `codex update` use that shared package.
+The extension never runs an updater during normal commands.
+`codex-accounts doctor --json` reports the actual chosen path, source, and version.
+The bundled fallback stays pinned until a package release updates
 it. No GUI restart or account change is performed by runtime selection.
 
 ## Development and releases

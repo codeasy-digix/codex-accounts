@@ -202,13 +202,23 @@ func nativeCommand(args []string) (string, []string, []string, error) {
 	if err != nil {
 		return "", nil, nil, err
 	}
-	binary, err := runtimeBinary()
+	selected, err := selectRuntime()
 	if err != nil {
 		return "", nil, nil, err
 	}
+	binary := selected.binary
 	env := runtimeEnvironment(binary, os.Environ())
 	nativeArgs := []string{binary}
-	if name := os.Getenv("CODEX_ACCOUNT"); name != "" && upstreamCommand(args) == "update" {
+	command := upstreamCommand(args)
+	if command == "update" && selected.source == "daemon" {
+		// CLI and daemon share one managed package. Updating a separate CLI
+		// installation would leave account execution on the previous release.
+		index := upstreamCommandIndex(args)
+		mapped := append([]string{}, args[:index]...)
+		mapped = append(mapped, "app-server", "daemon", "update")
+		args = append(mapped, args[index+1:]...)
+	}
+	if name := os.Getenv("CODEX_ACCOUNT"); command == "update" && (name != "" || selected.source == "daemon") {
 		// Installation is shared across accounts. A standalone updater must
 		// locate its releases under the original home, not a credential home.
 		env = setEnvironment(env, "CODEX_HOME", shared)
@@ -240,73 +250,57 @@ func nativeCommand(args []string) (string, []string, []string, error) {
 }
 
 func upstreamCommand(args []string) string {
+	if index := upstreamCommandIndex(args); index >= 0 {
+		return args[index]
+	}
+	return ""
+}
+
+func upstreamCommandIndex(args []string) int {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--":
-			return ""
+			return -1
 		case "-c", "--config", "-C", "--cd", "-p", "--profile", "-m", "--model", "-s", "--sandbox", "-a", "--ask-for-approval", "-P", "--permission-profile", "-i", "--image", "--add-dir", "--enable", "--disable", "--remote", "--remote-auth-token-env", "--local-provider":
 			i++
 		default:
 			if !strings.HasPrefix(args[i], "-") {
-				return args[i]
+				return i
 			}
 		}
 	}
-	return ""
+	return -1
 }
 
 func (a application) doctor(args []string) error {
 	if len(args) > 1 || (len(args) == 1 && args[0] != "--json") {
 		return errors.New("usage: codex-accounts doctor [--json]")
 	}
-	binary, err := runtimeBinary()
+	selected, err := selectRuntime()
 	if err != nil {
 		return err
 	}
+	binary := selected.binary
 	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "--version")
 	cmd.Env = runtimeEnvironment(binary, os.Environ())
 	data, err := cmd.Output()
 	if err != nil {
-		return errors.New("bundled Codex runtime could not start")
+		return errors.New("selected Codex runtime could not start")
 	}
 	_, tmuxErr := exec.LookPath("tmux")
-	result := map[string]any{"version": version, "runtime": binary, "codexVersion": strings.TrimSpace(string(data)), "runtimeDependencies": []string{"tmux"}, "tmuxAvailable": tmuxErr == nil}
+	result := map[string]any{"version": version, "runtime": binary, "runtimeSource": selected.source, "codexVersion": strings.TrimSpace(string(data)), "runtimeDependencies": []string{"tmux"}, "tmuxAvailable": tmuxErr == nil}
 	if len(args) == 1 {
 		return json.NewEncoder(a.out).Encode(result)
 	}
-	fmt.Fprintf(a.out, "codex-accounts: %s\nRuntime: %s\n%s\nNo Python, Node.js, or Go runtime required. Continue uses tmux (available: %t).\n", version, binary, cleanText(string(data)), tmuxErr == nil)
+	fmt.Fprintf(a.out, "codex-accounts: %s\nRuntime: %s (%s)\n%s\nNo Python, Node.js, or Go runtime required. Continue uses tmux (available: %t).\n", version, binary, selected.source, cleanText(string(data)), tmuxErr == nil)
 	return nil
 }
 
 func runtimeBinary() (string, error) {
-	if override := os.Getenv("CODEX_ACCOUNTS_RUNTIME"); override != "" {
-		p, err := filepath.Abs(override)
-		if err != nil {
-			return "", err
-		}
-		if executable(p) {
-			return p, nil
-		}
-		return "", errors.New("CODEX_ACCOUNTS_RUNTIME is not an executable file")
-	}
-	self, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	self, err = filepath.EvalSymlinks(self)
-	if err != nil {
-		return "", err
-	}
-	if native := installedRuntime(self); native != "" {
-		return native, nil
-	}
-	p := filepath.Join(filepath.Dir(self), "..", "libexec", "codex", "bin", "codex")
-	if executable(p) {
-		return filepath.Clean(p), nil
-	}
-	return "", errors.New("bundled Codex is missing; reinstall with brew reinstall codex-accounts")
+	selected, err := selectRuntime()
+	return selected.binary, err
 }
 
 func installedRuntime(self string) string {
