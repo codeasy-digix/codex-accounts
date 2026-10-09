@@ -1057,11 +1057,11 @@ func nativeSyncDir(directory string) error {
 }
 
 func nativeProcessesRunning(ctx context.Context) (bool, error) {
-	out, err := exec.CommandContext(ctx, "ps", "-axo", "pid=,comm=,args=").Output()
+	out, err := exec.CommandContext(ctx, "ps", "-axo", "pid=,uid=,stat=,comm=,args=").Output()
 	if err != nil {
 		return false, fmt.Errorf("native process guard unavailable: %w", err)
 	}
-	return nativeProcessListingRunning(out, os.Getpid())
+	return nativeScopedProcessListingRunning(out, os.Getpid(), os.Getuid())
 }
 
 func nativeProcessListingRunning(out []byte, selfPID int) (bool, error) {
