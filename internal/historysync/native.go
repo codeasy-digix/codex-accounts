@@ -1092,6 +1092,9 @@ func nativeProcessListingRunning(out []byte, selfPID int) (bool, error) {
 		if base == "codex-history-sync" || ((base == "codex-history-s" || base == "codex-history-sy") && argsBase == "codex-history-sync") {
 			continue
 		}
+		if base == "chatgpt" && nativeChromeExtensionHostCommand(fields) {
+			continue
+		}
 		lower := strings.ToLower(line)
 		if base == "codex" || strings.HasPrefix(base, "codex-") || argsBase == "codex" || strings.HasPrefix(base, "chatgpt") || strings.Contains(lower, "/codex.app/") || strings.Contains(lower, "/chatgpt.app/") {
 			return true, nil

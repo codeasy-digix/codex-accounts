@@ -1,6 +1,10 @@
 package historysync
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestNativeProcessGuardScopesCurrentUserAndIgnoresZombies(t *testing.T) {
 	for _, tc := range []struct {
@@ -39,5 +43,41 @@ func TestNativeProcessGuardMalformedListingsFailClosed(t *testing.T) {
 		if _, err := nativeScopedProcessListingRunning([]byte(line+"\n"), 999, 501); err == nil {
 			t.Errorf("malformed listing accepted: %q", line)
 		}
+	}
+}
+
+func TestNativeProcessGuardExcludesOnlyBundledChromeHost(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(home, ".codex", "plugins", "cache", "openai-bundled", "chrome")
+	latest := filepath.Join(root, "latest", "extension-host", "macos", "arm64", "ChatGPT for Chrome")
+	versioned := filepath.Join(root, "26.1002.52244", "extension-host", "macos", "arm64", "ChatGPT for Chrome")
+	otherHome := filepath.Join(t.TempDir(), "other", ".codex", "plugins", "cache", "openai-bundled", "chrome", "latest", "extension-host", "macos", "arm64", "ChatGPT for Chrome")
+	unrecognizedVersion := filepath.Join(root, "unverified", "extension-host", "macos", "arm64", "ChatGPT for Chrome")
+	for _, tc := range []struct {
+		name, line string
+		want       bool
+	}{
+		{"observed spaced macOS host", "75736 501 S " + latest + " " + latest + " chrome-extension://test-host/", false},
+		{"resolved numeric version", "75736 501 S " + versioned + " " + versioned, false},
+		{"foreign host remains scoped", "75736 502 S " + latest + " " + latest, false},
+		{"own zombie remains scoped", "75736 501 Z /Applications/ChatGPT.app/Contents/MacOS/ChatGPT ChatGPT <defunct>", false},
+		{"CLI argv cannot spoof host", "123 501 S codex /usr/local/bin/codex app-server --browser-host " + latest, true},
+		{"ChatGPT app argv cannot spoof host", "124 501 S /Applications/ChatGPT.app/Contents/MacOS/ChatGPT ChatGPT --browser-host " + latest, true},
+		{"Codex app argv cannot spoof host", "125 501 S /Applications/Codex.app/Contents/MacOS/Codex Codex --browser-host " + latest, true},
+		{"ChatGPTService remains native", "126 501 S ChatGPTService /Applications/ChatGPT.app/Contents/Frameworks/ChatGPT Service --browser-host " + latest, true},
+		{"same name outside bundled path", "127 501 S /tmp/ChatGPT for Chrome /tmp/ChatGPT for Chrome", true},
+		{"other home is not excluded", "127 501 S " + otherHome + " ChatGPT", true},
+		{"unrecognized version is not excluded", "127 501 S " + unrecognizedVersion + " ChatGPT", true},
+		{"host plus actual native writer", "75736 501 S " + latest + " " + latest + "\n123 501 S codex codex app-server", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := nativeScopedProcessListingRunning([]byte(tc.line+"\n"), 999, 501)
+			if err != nil || got != tc.want {
+				t.Fatalf("running=%v err=%v, want %v", got, err, tc.want)
+			}
+		})
 	}
 }
