@@ -387,8 +387,11 @@ accounts, default credentials, or conversations. No upstream `codex` executable
 is overwritten: only `codex-accounts` is installed in Homebrew's `bin` directory.
 The `codex` command name is provided by the opt-in shell function. Only `account`
 and `continue` are extension commands; help, version, doctor, and other
-commands pass to the selected native CLI. The default environment retains native
-daemon behavior. Named accounts use `--no-daemon` to isolate their credentials.
+commands pass to the selected native CLI. Default and named accounts use
+`--no-daemon`: each session owns its runtime, and exiting releases its conversation
+without the shared daemon's idle timeout. Account credentials and the shared local
+history store are unchanged. Use tmux to keep a session running after disconnecting
+its terminal. An existing daemon or client is not stopped by this launch policy.
 Installation updates use the shared installation home without changing the
 account selected in the parent shell.
 

@@ -46,7 +46,7 @@ func TestInstalledRuntimeSkipsRecursiveShimsAndFollowsUpdates(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if binary != expectedNative || len(args) != 2 || args[1] != "--version" {
+		if binary != expectedNative || !slices.Equal(args[1:], []string{"--no-daemon", "--version"}) {
 			t.Fatalf("native command changed: %s %v", binary, args)
 		}
 		cmd := exec.Command(binary, args[1:]...)
@@ -130,7 +130,7 @@ func TestManagedRuntimeSharedAcrossDefaultAndNamedAccounts(t *testing.T) {
 		if err != nil || selected != binary {
 			t.Fatalf("account %q selected a different runtime: %s %v", name, selected, err)
 		}
-		if slices.Contains(args, "--no-daemon") != (name != "") {
+		if !slices.Contains(args, "--no-daemon") {
 			t.Fatalf("account daemon policy changed: %q %v", name, args)
 		}
 		if name != "" && (!slices.Contains(env, "CODEX_SQLITE_HOME="+shared) || !slices.Contains(args, "sqlite_home="+shellJSONString(shared))) {
@@ -267,7 +267,7 @@ codex future-upstream-command --flag || exit 15
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, arguments := range []string{`"args":["--version"]`, `"args":["--help"]`, `"args":["update","--help"]`, `"args":["doctor","--json"]`, `"args":["future-upstream-command","--flag"]`} {
+			for _, arguments := range []string{`"args":["--no-daemon","--version"]`, `"args":["--no-daemon","--help"]`, `"args":["update","--help"]`, `"args":["--no-daemon","doctor","--json"]`, `"args":["--no-daemon","future-upstream-command","--flag"]`} {
 				if !strings.Contains(string(calls), arguments) {
 					t.Fatalf("native arguments changed: %s\n%s", arguments, calls)
 				}
@@ -276,35 +276,34 @@ codex future-upstream-command --flag || exit 15
 	}
 }
 
-func TestOnlyNamedAccountDisablesSharedDaemon(t *testing.T) {
+func TestDefaultAndNamedAccountsDisableSharedDaemon(t *testing.T) {
 	_, shared, accounts := sandbox(t)
-	_, args, _, err := nativeCommand([]string{"resume", "--last"})
-	if err != nil || strings.Contains(strings.Join(args, " "), "--no-daemon") {
-		t.Fatalf("default daemon behavior changed: %v %v", args, err)
-	}
 	home := seed(t, shared, accounts, "fixture")
-	t.Setenv("CODEX_ACCOUNT", "fixture")
-	t.Setenv("CODEX_HOME", home)
-	_, args, _, err = nativeCommand([]string{"resume", "--last"})
-	if err != nil || len(args) < 2 || args[1] != "--no-daemon" {
-		t.Fatalf("named account could use another account's daemon: %v %v", args, err)
-	}
-	_, args, _, err = nativeCommand([]string{"--no-daemon", "resume", "--help"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	count := 0
-	for _, argument := range args[1:] {
-		if argument == "--no-daemon" {
-			count++
+	for _, name := range []string{"", "fixture"} {
+		t.Setenv("CODEX_ACCOUNT", name)
+		t.Setenv("CODEX_HOME", "")
+		if name != "" {
+			t.Setenv("CODEX_HOME", home)
 		}
-	}
-	if err != nil || count != 1 {
-		t.Fatalf("explicit native flag duplicated: %v %v", args, err)
-	}
-	_, args, _, err = nativeCommand([]string{"exec", "--", "--no-daemon"})
-	if err != nil || len(args) < 2 || args[1] != "--no-daemon" {
-		t.Fatalf("prompt text disabled account isolation: %v %v", args, err)
+		for _, input := range [][]string{nil, {"resume", "--last"}, {"exec", "--", "--no-daemon"}} {
+			_, args, _, err := nativeCommand(input)
+			if err != nil || len(args) < 2 || args[1] != "--no-daemon" || !slices.Equal(args[len(args)-len(input):], input) {
+				t.Fatalf("account %q could use the shared daemon or alter the prompt: %v %v", name, args, err)
+			}
+		}
+		_, args, _, err := nativeCommand([]string{"--no-daemon", "resume", "--help"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, argument := range args[1:] {
+			if argument == "--no-daemon" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("explicit native flag duplicated for account %q: %v", name, args)
+		}
 	}
 }
 

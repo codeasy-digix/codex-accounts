@@ -210,6 +210,17 @@ func nativeCommand(args []string) (string, []string, []string, error) {
 	env := runtimeEnvironment(binary, os.Environ())
 	nativeArgs := []string{binary}
 	command := upstreamCommand(args)
+	if command != "update" {
+		// Default and named sessions own their runtime so exiting releases the
+		// conversation without waiting for the shared daemon's idle timeout.
+		options := args
+		if end := slices.Index(options, "--"); end >= 0 {
+			options = options[:end]
+		}
+		if !slices.Contains(options, "--no-daemon") {
+			nativeArgs = append(nativeArgs, "--no-daemon")
+		}
+	}
 	if command == "update" && selected.source == "daemon" {
 		// CLI and daemon share one managed package. Updating a separate CLI
 		// installation would leave account execution on the previous release.
@@ -233,14 +244,6 @@ func nativeCommand(args []string) (string, []string, []string, error) {
 			return "", nil, nil, errors.New("CODEX_HOME does not match the selected account; run codex account NAME again")
 		}
 		env = accountEnvironment(env, home, shared, true)
-		// Named accounts must not attach to another account's shared daemon.
-		options := args
-		if end := slices.Index(options, "--"); end >= 0 {
-			options = options[:end]
-		}
-		if !slices.Contains(options, "--no-daemon") {
-			nativeArgs = append(nativeArgs, "--no-daemon")
-		}
 		nativeArgs = append(nativeArgs, configArguments(shared, true)...)
 	} else if os.Getenv("CODEX_HOME") == "" && os.Getenv("CODEX_SHARED_HOME") != "" {
 		env = setEnvironment(env, "CODEX_HOME", shared)

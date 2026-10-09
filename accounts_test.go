@@ -449,8 +449,8 @@ codex resume --help
 				t.Fatalf("%s: %v\n%s", shell, err, output)
 			}
 			calls, _ := os.ReadFile(filepath.Join(root, "calls.jsonl"))
-			if !strings.Contains(string(calls), `"args":["resume","--help"]`) {
-				t.Fatal("native CLI not dispatched")
+			if !strings.Contains(string(calls), `"args":["--no-daemon","resume","--help"]`) {
+				t.Fatal("default session was not dispatched without the shared daemon")
 			}
 			// Failure must leave the already-selected terminal unchanged.
 			t.Setenv("CODEX_ACCOUNTS_TEST_MODE", "network")
