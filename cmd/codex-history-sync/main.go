@@ -50,11 +50,15 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 	if err != nil {
 		return err
 	}
+	args, jsonOutput, verbose := displayFlags(args)
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(output, "Usage: codex-history-sync [--config PATH] [--store PATH] sync [--dry-run] | plan | status | conflicts | daemon | serve\n\nThis optional relay only synchronizes conversation history. Configure enabled:true to run sync or daemon.")
+		fmt.Fprintln(output, "Usage: codex-history-sync [--config PATH] [--store PATH] sync [--dry-run] | plan | status | conflicts | daemon | serve\n\nInteractive commands show a compact summary. Use --json or --verbose for the complete report.\nThis optional relay only synchronizes conversation history. Configure enabled:true to run sync or daemon.")
 		return nil
 	}
 	command := args[0]
+	if (command == "serve" || command == "daemon") && (jsonOutput || verbose) {
+		return fmt.Errorf("%s already uses the JSON protocol; --json/--verbose are for interactive commands", command)
+	}
 	if command == "serve" {
 		if len(args) != 1 {
 			return errors.New("serve accepts only --store PATH")
@@ -104,7 +108,10 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		if err != nil {
 			return err
 		}
-		return encoder.Encode(state)
+		if jsonOutput || verbose {
+			return encoder.Encode(state)
+		}
+		return printConflicts(output, state)
 	}
 	if command == "status" {
 		if len(args) != 1 {
@@ -130,19 +137,16 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 			}
 			report.Pending = pendingCount
 		}
-		return encoder.Encode(struct {
-			Node     string                   `json:"node"`
-			Enabled  bool                     `json:"enabled"`
-			Report   *historysync.CycleReport `json:"last_report,omitempty"`
-			Hub      *historysync.HubState    `json:"hub,omitempty"`
-			HubError string                   `json:"hub_error,omitempty"`
-			Pending  int                      `json:"pending"`
-		}{cfg.Node, cfg.Enabled, report, func() *historysync.HubState {
+		status := statusReport{cfg.Node, cfg.Enabled, report, func() *historysync.HubState {
 			if stateErr != nil {
 				return nil
 			}
 			return &state
-		}(), hubError, pendingCount})
+		}(), hubError, pendingCount}
+		if jsonOutput || verbose {
+			return encoder.Encode(status)
+		}
+		return printStatus(output, status)
 	}
 	if command != "sync" && command != "plan" && command != "daemon" {
 		return fmt.Errorf("unknown command %q", command)
@@ -175,7 +179,13 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 	}
 	if command != "daemon" {
 		report, err := relay.Sync(ctx, *dryRun)
-		if outputErr := encoder.Encode(report); outputErr != nil {
+		var outputErr error
+		if jsonOutput || verbose {
+			outputErr = encoder.Encode(report)
+		} else {
+			outputErr = printCycle(output, &report, *dryRun)
+		}
+		if outputErr != nil {
 			return outputErr
 		}
 		return err

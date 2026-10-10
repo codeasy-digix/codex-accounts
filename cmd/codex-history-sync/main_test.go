@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,7 +75,7 @@ func TestStatusAndConflictsShowDurableLedgerWithoutNativeAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := run(context.Background(), []string{"--config", config, "conflicts"}, bytes.NewReader(nil), &out); err != nil {
+	if err := run(context.Background(), []string{"--config", config, "conflicts", "--json"}, bytes.NewReader(nil), &out); err != nil {
 		t.Fatal(err)
 	}
 	var state historysync.HubState
@@ -85,7 +86,7 @@ func TestStatusAndConflictsShowDurableLedgerWithoutNativeAccess(t *testing.T) {
 		t.Fatalf("durable ledger hidden: %s", out.String())
 	}
 	out.Reset()
-	if err := run(context.Background(), []string{"status", "--config", config}, bytes.NewReader(nil), &out); err != nil {
+	if err := run(context.Background(), []string{"status", "--config", config, "--json"}, bytes.NewReader(nil), &out); err != nil {
 		t.Fatal(err)
 	}
 	var status struct {
@@ -112,7 +113,7 @@ func TestStatusAndConflictsShowDurableLedgerWithoutNativeAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if err := run(context.Background(), []string{"status", "--config", config}, bytes.NewReader(nil), &out); err != nil {
+	if err := run(context.Background(), []string{"status", "--config", config, "--json"}, bytes.NewReader(nil), &out); err != nil {
 		t.Fatal(err)
 	}
 	var interruptedStatus struct {
@@ -124,6 +125,13 @@ func TestStatusAndConflictsShowDurableLedgerWithoutNativeAccess(t *testing.T) {
 	}
 	if interruptedStatus.Pending != 1 || interruptedStatus.Report.Pending != 1 || interruptedStatus.Report.ConflictsTotal != 1 || !interruptedStatus.Report.HubStateCurrent || !interruptedStatus.Report.Interrupted {
 		t.Fatal("status hid interrupted pending/conflicts", out.String())
+	}
+	out.Reset()
+	if err := run(context.Background(), []string{"status", "--config", config}, bytes.NewReader(nil), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "충돌 누적 1 (미해결 0)") || !strings.Contains(out.String(), "대기: 1") || strings.Contains(out.String(), "digest") {
+		t.Fatal("compact status hid durable counts or dumped metadata", out.String())
 	}
 	if _, err := os.Stat(cfg.Home); !os.IsNotExist(err) {
 		t.Fatal("status accessed native state", err)

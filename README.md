@@ -263,6 +263,12 @@ codex-history-sync status     # Last cycle, pending imports, durable conflicts
 codex-history-sync conflicts  # Recorded divergent versions and selected winners
 ```
 
+Interactive `status`, `plan`, and `sync` commands print compact counters and
+bounded error/deferral summaries. `conflicts` shows up to 10 actual conflicts,
+prioritizing unresolved records; normal revision records are counted separately.
+Add `--json` or `--verbose` to any of these commands for the complete JSON report.
+Daemon logs and the SSH `serve` protocol retain their original complete JSON format.
+
 For an existing, enabled relay, prepare a system service as its owner:
 
 ```sh
