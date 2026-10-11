@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -174,7 +175,7 @@ func TestManagedRuntimeMatchesRunningReleaseWithoutRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			pidFile := filepath.Join(daemonDir, "daemon.pid")
-			pidData := []byte(`{"pid":12345}`)
+			pidData := []byte(fmt.Sprintf(`{"pid":%d}`, os.Getpid()))
 			if err := os.WriteFile(pidFile, pidData, 0600); err != nil {
 				t.Fatal(err)
 			}

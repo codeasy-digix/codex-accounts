@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -21,6 +22,10 @@ type codexRuntime struct {
 }
 
 func selectRuntime() (codexRuntime, error) {
+	return selectRuntimeInspect(true)
+}
+
+func selectRuntimeInspect(inspect bool) (codexRuntime, error) {
 	if override := os.Getenv("CODEX_ACCOUNTS_RUNTIME"); override != "" {
 		p, err := filepath.Abs(override)
 		if err != nil {
@@ -35,7 +40,7 @@ func selectRuntime() (codexRuntime, error) {
 	if err != nil {
 		return codexRuntime{}, err
 	}
-	if binary, err := managedRuntime(shared); err != nil {
+	if binary, err := managedRuntimeInspect(shared, inspect); err != nil {
 		return codexRuntime{}, err
 	} else if binary != "" {
 		return codexRuntime{binary, "daemon"}, nil
@@ -61,6 +66,10 @@ func selectRuntime() (codexRuntime, error) {
 var releaseVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$`)
 
 func managedRuntime(shared string) (string, error) {
+	return managedRuntimeInspect(shared, true)
+}
+
+func managedRuntimeInspect(shared string, inspect bool) (string, error) {
 	root := filepath.Join(shared, "packages", "app-server-daemon")
 	current := filepath.Join(root, "current")
 	if _, err := os.Lstat(current); os.IsNotExist(err) {
@@ -72,10 +81,18 @@ func managedRuntime(shared string) (string, error) {
 	if err != nil || !executable(binary) {
 		return "", errors.New("managed Codex package is incomplete; repair the daemon installation or set CODEX_ACCOUNTS_RUNTIME explicitly")
 	}
-	if _, err := os.Stat(filepath.Join(shared, "app-server-daemon", "daemon.pid")); os.IsNotExist(err) {
+	if !inspect {
 		return binary, nil
-	} else if err != nil {
+	}
+	_, alive, err := daemonProcess(shared)
+	if err != nil {
 		return "", err
+	}
+	if !alive {
+		// SIGKILL leaves the official PID record behind. A dead process cannot
+		// require compatibility with an older running release. Do not delete
+		// the record or start a server while selecting an account's runtime.
+		return binary, nil
 	}
 
 	// A scheduled download may advance current while busy agents still use an
@@ -89,7 +106,11 @@ func managedRuntime(shared string) (string, error) {
 	cmd.Dir = shared
 	data, err := cmd.Output()
 	if err != nil {
-		return "", errors.New("could not inspect the Codex background server; no runtime or server was changed")
+		// The process may have exited between the liveness check and the RPC.
+		if _, alive, checkErr := daemonProcess(shared); checkErr == nil && !alive {
+			return binary, nil
+		}
+		return "", errors.New("could not inspect the running Codex background server; use codex app-server daemon restart after active work finishes")
 	}
 	var status struct {
 		Status              string `json:"status"`
@@ -118,4 +139,34 @@ func managedRuntime(shared string) (string, error) {
 		return "", fmt.Errorf("running Codex %s package is missing; finish active work before updating the background server", status.AppServerVersion)
 	}
 	return filepath.EvalSymlinks(running)
+}
+
+// Only inspect the PID. A live but unresponsive process is never killed or
+// treated as stopped by the account selector or watchdog.
+func daemonProcess(shared string) (int, bool, error) {
+	var firstErr error
+	for _, name := range []string{"daemon.pid", "app-server.pid"} {
+		p := filepath.Join(shared, "app-server-daemon", name)
+		data, exists, err := readPrivateFile(p, true)
+		if err != nil {
+			firstErr = errors.New("could not read the Codex daemon process record")
+			continue
+		}
+		if !exists {
+			continue
+		}
+		var record struct {
+			PID int `json:"pid"`
+		}
+		if len(data) > 16384 || json.Unmarshal(data, &record) != nil || record.PID <= 0 {
+			firstErr = errors.New("invalid Codex daemon process record; use codex app-server daemon start to repair it")
+			continue
+		}
+		if err := syscall.Kill(record.PID, 0); err == nil || errors.Is(err, syscall.EPERM) {
+			return record.PID, true, nil
+		} else if !errors.Is(err, syscall.ESRCH) {
+			firstErr = errors.New("could not inspect the Codex daemon process")
+		}
+	}
+	return 0, false, firstErr
 }

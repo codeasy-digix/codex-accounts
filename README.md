@@ -407,12 +407,45 @@ package under `~/.codex/packages/app-server-daemon`, an installed `codex` on
 package regardless of npm, NVM, or Homebrew PATH order. An explicit override
 remains authoritative. Recursive shell shims and relative PATH entries are skipped.
 
-When a managed daemon PID file exists, selection runs the native read-only
+When a managed daemon process is alive, selection runs the native read-only
 `app-server daemon version` command. If an update has installed a newer package
 while an older daemon is still running, account sessions use that running
 release. Selection never starts, restarts, updates, or logs into a server. An
 unreadable version response or missing running release produces an error rather
 than silently choosing an incompatible CLI.
+
+A force kill can leave a native PID file behind. A proven dead PID is ignored
+without deleting native state or contacting the missing server. Account login,
+help, and normal sessions remain usable while the shared daemon is stopped.
+Daemon lifecycle commands use the current managed package and the shared home,
+including when a named account is selected. They can repair a stopped daemon
+without first requiring its version RPC to succeed.
+
+### Automatic recovery of the official daemon
+
+```sh
+codex account --daemon-watchdog start
+codex account --daemon-watchdog status
+codex app-server daemon start
+codex app-server daemon restart
+codex app-server daemon stop
+codex account --daemon-watchdog stop
+```
+
+The opt-in watchdog runs in the named tmux session `codex-daemon-watchdog`.
+Attach with `tmux attach -t codex-daemon-watchdog`. Every five seconds it checks
+the official daemon PID locally, with no account lookup or model call. Only a
+missing/dead daemon triggers the official idempotent `daemon start`; failures
+use backoff up to 60 seconds. A live but unresponsive process is left intact.
+Neither account credentials nor conversations are changed.
+
+An explicit native `daemon stop` pauses recovery before stopping the server;
+native `start`/`restart` enables the previously configured watchdog again.
+Stopping the watchdog itself leaves the official daemon running. Its settings
+and log are under `${XDG_STATE_HOME:-~/.local/state}/codex-accounts/daemon-watchdog/`.
+After a reboot or killing its tmux session, run the watchdog start command again.
+This helper manages the upstream daemon lifecycle; it does not submit prompts
+or reopen forcibly closed terminal chats.
 
 With a managed package selected, `codex update` forwards to the native
 `app-server daemon update` command in the shared installation home. This updates

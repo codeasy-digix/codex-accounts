@@ -156,6 +156,7 @@ func sandbox(t *testing.T) (string, string, string) {
 	root := t.TempDir()
 	shared, accounts := filepath.Join(root, ".codex"), filepath.Join(root, ".codex-accounts")
 	t.Setenv("HOME", root)
+	t.Setenv("CODEX_ACCOUNTS_STATE_HOME", filepath.Join(root, "state"))
 	t.Setenv("CODEX_SHARED_HOME", shared)
 	t.Setenv("CODEX_ACCOUNTS_DIR", accounts)
 	t.Setenv("CODEX_ACCOUNT", "")
