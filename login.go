@@ -45,7 +45,7 @@ func parseLoginOptions(args []string) (loginOptions, error) {
 	return options, nil
 }
 
-const accountUsage = "usage: codex account NAME [--set-default] [--login] [--browser|--device]"
+const accountUsage = "usage: codexm account NAME [--set-default] [--login] [--browser|--device]"
 
 func (a application) chooseLoginMethod(method string) (string, error) {
 	if method != "" {

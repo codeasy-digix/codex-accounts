@@ -119,7 +119,7 @@ func (a application) daemonWatchdog(args []string) error {
 		args = []string{"status"}
 	}
 	if len(args) > 2 || (len(args) == 2 && (args[0] != "status" || args[1] != "--json")) {
-		return errors.New("usage: codex account --daemon-watchdog start|stop|status [--json]")
+		return errors.New("use codexm daemon watch|unwatch|status [--json]")
 	}
 	shared, _, err := locations()
 	if err != nil {
@@ -206,7 +206,7 @@ func (a application) daemonWatchdog(args []string) error {
 		}
 		return nil
 	default:
-		return errors.New("usage: codex account --daemon-watchdog start|stop|status [--json]")
+		return errors.New("use codexm daemon watch|unwatch|status [--json]")
 	}
 }
 

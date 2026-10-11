@@ -32,7 +32,7 @@ func main() {
 	defer cancel()
 	app := application{os.Stdout, os.Stderr, os.Stdin, ctx}
 	if err := app.execute(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "codex:", err)
+		fmt.Fprintln(os.Stderr, "codexm:", err)
 		if ctx.Err() != nil {
 			os.Exit(130)
 		}
@@ -74,7 +74,7 @@ func (a application) execute(args []string) error {
 			return a.doctor(args[1:])
 		case "--account":
 			if len(args) < 2 {
-				return errors.New("choose an account with codex account NAME, then run codex")
+				return errors.New("use codexm account NAME and open the job through codexm")
 			}
 			if args[1] == "default" {
 				for _, key := range []string{"CODEX_ACCOUNT", "CODEX_HOME", "CODEX_SQLITE_HOME"} {
@@ -134,7 +134,7 @@ func (a application) account(args []string) error {
 	}
 	if args[0] == "--list" {
 		if len(args) != 1 {
-			return errors.New("usage: codex account --list")
+			return errors.New("usage: codexm account --list")
 		}
 		names, err := listAccounts(accounts)
 		if err != nil {
@@ -196,7 +196,7 @@ func (a application) account(args []string) error {
 		fmt.Fprintf(a.out, "export CODEX_ACCOUNT=%s\nexport CODEX_HOME=%s\nexport CODEX_SQLITE_HOME=%s\n",
 			shellQuote(args[0]), shellQuote(home), shellQuote(shared))
 	} else {
-		fmt.Fprintf(a.out, "Run codex account %s in your terminal, then codex or codex resume --all.\n", args[0])
+		fmt.Fprintf(a.out, "Use codexm account %s, then open the conversation through codexm.\n", args[0])
 	}
 	return nil
 }
@@ -267,7 +267,7 @@ func nativeCommand(args []string) (string, []string, []string, error) {
 			return "", nil, nil, err
 		}
 		if os.Getenv("CODEX_HOME") != home {
-			return "", nil, nil, errors.New("CODEX_HOME does not match the selected account; run codex account NAME again")
+			return "", nil, nil, errors.New("CODEX_HOME does not match the legacy account; use codexm account NAME in the manager")
 		}
 		env = accountEnvironment(env, home, shared, true)
 		nativeArgs = append(nativeArgs, configArguments(shared, true)...)
@@ -387,34 +387,28 @@ func runtimeEnvironment(binary string, env []string) []string {
 	return setEnvironment(env, "PATH", p)
 }
 
-const helpText = `Codex account — local accounts with shared conversations
+const helpText = `codexm account — account management has moved to codexm
 
-  codex account                         Account, workspace and remaining limits
-  codex account NAME [--login]           Validate/login; choose device or browser
-  codex account NAME --browser           Sign in using the local browser
-  codex account NAME --device            Sign in using a device code
-  codex account NAME --set-default       Set the machine's default login
-  codex account default                 Return this terminal to the default login
-  codex account --list                   List account nicknames
-  codex account --daemon-watchdog start  Enable automatic official daemon recovery
-  codex account --daemon-watchdog stop   Stop automatic recovery (leave daemon running)
-  codex account --daemon-watchdog status [--json]  Show recovery and daemon state
-  codex continue [--list|--json]          List quota and other stopped work
-  codex continue --quota --all           Continue all quota interruptions
-  codex continue --other --all           Continue all other interruptions
-  codex continue UUID|--all              Continue selected work or both groups
+  codexm account                         Saved worker account and existing logins
+  codexm account NAME                    Select the default for new/imported jobs
+  codexm account NAME --login --browser  Sign in using the local browser
+  codexm account NAME --login --device   Sign in using a device code
+  codexm account --list                  List account nicknames
+  codexm setup --manager NAME            Select the separate manager account
+  codexm daemon watch                    Enable automatic official daemon recovery
+  codexm daemon unwatch                  Stop recovery; leave official daemon running
+  codexm daemon status [--json]          Show recovery and daemon state
+  codexm daemon stop                     Stop daemon and pause automatic recovery
+  codexm                                Manage/open existing or new conversations
 
-Example: codex account ryu; codex resume --all
 Official daemon:
-  codex app-server daemon start          Start if stopped; keep running work
-  codex app-server daemon restart        Restart the shared official server
-  codex app-server daemon stop           Stop server and pause automatic recovery
-  codex app-server daemon version        Show installed and running versions
-Use codex --help for the original Codex commands and flags.
-Account selection stays local to this terminal. Existing conversations are shared.
-No server synchronization or GUI. Continue and automatic recovery use tmux.
-The legacy spelling 'codex account NAME default' is also accepted.
-Support: support@digix.kr
+  codex app-server daemon start
+  codex app-server daemon restart
+  codex app-server daemon version
+Use codex --help for the unchanged official CLI.
+New codexm selection does not change this shell or the machine's native login.
+Existing managed jobs keep their accounts. Legacy compatibility flags remain
+available for existing installations; new distribution belongs to codexm.
 `
 
 const shellInit = `# codex-accounts: a separate account in each shell, with shared local history.

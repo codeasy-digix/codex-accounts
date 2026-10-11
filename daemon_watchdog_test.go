@@ -189,12 +189,12 @@ func TestAccountHelpUsesPublicCodexCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := out.String()
-	if strings.Contains(text, "codex-accounts") || !strings.Contains(text, "codex account NAME") || !strings.Contains(text, "codex app-server daemon restart") {
+	if strings.Contains(text, "codex-accounts") || !strings.Contains(text, "codexm account NAME") || !strings.Contains(text, "codex app-server daemon restart") {
 		t.Fatal("public help still exposes internal controller commands")
 	}
 	cmd := exec.Command(testCLI, "account", "--list", "unexpected")
 	data, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(data), "codex: usage: codex account --list") || strings.Contains(string(data), "codex-accounts:") {
+	if err == nil || !strings.Contains(string(data), "codexm: usage: codexm account --list") || strings.Contains(string(data), "codex-accounts:") {
 		t.Fatal("public error prefix changed")
 	}
 }

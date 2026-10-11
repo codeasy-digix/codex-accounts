@@ -1,5 +1,11 @@
 # codex-accounts
 
+> Account distribution is moving to [codexm](https://github.com/kakadais/codexm).
+> Automatic releases and the Homebrew packager have been removed. The instructions
+> below document historical releases; new installations should use `codexm account`
+> without wrapping the official `codex` command. No replacement release is published
+> by this change. See [the migration policy](docs/releasing.md).
+
 Per-terminal ChatGPT accounts for Codex, with one shared local conversation store.
 macOS and Linux, Apple Silicon/ARM64 and Intel/AMD64. No Python, Node.js, or Go
 runtime to install. Homebrew installs this compiled CLI and a pinned official
