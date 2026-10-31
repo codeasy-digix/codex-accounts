@@ -1,36 +1,18 @@
-# codex-accounts (retired distribution)
+# codex-accounts — retired
 
-Account and worker management now belongs to
-[codexm](https://github.com/kakadais/codexm), an independent terminal manager.
-The official `codex` command runs directly, without an account shell wrapper or
-an account-helper/daemon prerequisite.
+All maintained implementation, tests, installation and operational documentation
+now belong to [kakadais/codexm](https://github.com/kakadais/codexm). This repository
+contains no current executable source or release workflow.
 
-Current commands are:
+Use `codexm account` for account management and the explicit
+`codexm history-sync` subcommand for the optional history relay. Official `codex`
+is not wrapped. Existing credentials under `~/.codex-accounts` and conversations
+under `~/.codex` remain user data and must not be deleted during retirement.
 
-```sh
-codexm account --help
-codexm account --list
-codexm account dongbu
-codexm setup --manager inyoung
-codexm daemon status
-codexm daemon restart
-```
+The pre-consolidation source remains in Git at
+`b8a7b1284de68f8507247544369190b3f8196cec`. Existing published historical releases
+are retained for provenance and rollback, not recommended for new installation.
+No new tag, release, Homebrew or npm package is published by this retirement.
 
-The saved default applies to new/imported codexm jobs. Existing jobs keep their
-accounts; the manager account is separate. Native Codex authentication and the
-parent shell stay unchanged. Existing account credentials and conversation IDs
-are retained during migration.
-
-## Distribution status
-
-Automatic tag releases and the old Homebrew packager are retired. Replacement
-Homebrew/npm packages are prepared locally in the codexm repository; this change
-publishes nothing and does not remove already published historical archives or
-alter the official `@openai/codex` package. See [the retirement policy](docs/releasing.md)
-and [codexm distribution preparation](https://github.com/kakadais/codexm/blob/main/docs/distribution.md).
-
-This repository preserves the compatibility source, tests and the separately
-managed, opt-in `codex-history-sync` executable. History sync is not bundled into
-codexm and is not enabled by this migration. The complete previous guide is in
-[archived legacy usage](docs/legacy-usage.md); it is a record of retired behavior,
-not a current installation guide.
+See [product deployment and ownership](https://github.com/kakadais/codexm/blob/main/docs/deployment.md)
+and [history relay operations](https://github.com/kakadais/codexm/blob/main/docs/history-sync.md).
